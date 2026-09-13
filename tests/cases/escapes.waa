@@ -1,0 +1,6 @@
+andika("a\tb");
+andika("say \"hi\"");
+andika("back\\slash");
+andika(uburebure("\n"));
+andika(uburebure("\t\r"));
+andika("umurongo\numwe");

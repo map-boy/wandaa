@@ -1,0 +1,12 @@
+reka a = urutonde(5);
+andika(ubunini(a));
+andika(a[0]);
+reka i = 0;
+mugihe (i < 5) { a[i] = i * i; i = i + 1; }
+i = 0;
+mugihe (i < 5) { andika(a[i]); i = i + 1; }
+reka big = urutonde(100);
+andika(ubunini(big));
+big[99] = 7;
+andika(big[99]);
+andika(ubunini(urutonde(0)));

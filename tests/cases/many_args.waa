@@ -1,0 +1,14 @@
+# Arguments five and up travel in the caller's outgoing stack area, not
+# registers. Exercises emitCall's [rsp+8*i] placement and the callee-side
+# [rbp+16+8*i] reload.
+umurimo tanu(a, b, c, d, e) { tanga a + b + c + d + e; }
+umurimo gatandatu(a, b, c, d, e, f) { tanga a*1 + b*2 + c*3 + d*4 + e*5 + f*6; }
+umurimo umunani(a, b, c, d, e, f, g, h) {
+  tanga a + b + c + d + e + f + g + h;
+}
+andika(tanu(1, 2, 3, 4, 5));
+andika(gatandatu(1, 1, 1, 1, 1, 1));
+andika(umunani(1, 2, 3, 4, 5, 6, 7, 8));
+# Nested calls as arguments: each inner call must keep RSP 16-byte aligned.
+andika(tanu(tanu(1,1,1,1,1), 2, 3, 4, gatandatu(1,0,0,0,0,1)));
+andika(umunani(1, 2, 3, 4, tanu(1,1,1,1,1), 6, 7, umunani(1,1,1,1,1,1,1,1)));

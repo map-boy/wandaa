@@ -1,0 +1,14 @@
+umurimo fib(n) {
+  niba (n < 2) { tanga n; }
+  tanga fib(n - 1) + fib(n - 2);
+}
+umurimo four(a, b, c, d) { tanga a * 1000 + b * 100 + c * 10 + d; }
+umurimo three(a, b, c) { tanga a + b + c; }
+umurimo one(a) { tanga a * 2; }
+umurimo none() { tanga 42; }
+andika(fib(20));
+andika(four(1, 2, 3, 4));
+andika(three(10, 20, 30));
+andika(one(21));
+andika(none());
+andika(fib(one(5)));

@@ -1,0 +1,18 @@
+reka a = 17;
+reka b = 5;
+andika(a + b);
+andika(a - b);
+andika(a * b);
+andika(a / b);
+andika(0 - a);
+andika(-a);
+andika(a < b);
+andika(a > b);
+andika(a <= b);
+andika(a >= b);
+andika(a == b);
+andika(a != b);
+andika(((a + b) * (a - b)) / 2);
+andika(a * b + a / b - 3);
+andika(nibyo);
+andika(oya);

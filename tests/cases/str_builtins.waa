@@ -1,0 +1,17 @@
+reka s = "Mwiriwe Rwanda" + "";
+andika(uburebure(s));
+andika(inyuguti(s, 0));
+andika(inyuguti(s, 100));
+andika(igice(s, 0, 7));
+andika(igice(s, 8, 6));
+andika(igice(s, 8, 999));
+andika(igice(s, -5, 3));
+andika(mu_ijambo(12345));
+andika(mu_ijambo(-987));
+andika(mu_ijambo(0));
+andika(uburebure(mu_ijambo(12345)));
+andika(mu_mubare("4242"));
+andika(mu_mubare("-17"));
+andika(mu_mubare("abc"));
+andika(mu_mubare("12abc"));
+andika(mu_ijambo(mu_mubare("777")) + "!");

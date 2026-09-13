@@ -1,17 +1,102 @@
-﻿name: build
+name: build
+
 on: [push, pull_request]
+
 jobs:
-  build:
+  # The real test: build the compiler on Windows, compile every Wandaa program
+  # with nothing but wandaac.exe, run the resulting native binaries, and assert
+  # their output. No MinGW is installed in this job -- if anything still needed
+  # an assembler or linker at compile time, this job would fail.
+  windows:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Install MinGW
-        run: choco install mingw -y
-      - name: Build and run all examples
+
+      - name: Build wandaac.exe
         shell: pwsh
         run: |
-          $examples = Get-ChildItem examples\*.waa
-          foreach ($f in $examples) {
-            .\build.ps1 $f.FullName
-            if ($LASTEXITCODE -ne 0) { exit 1 }
-          }
+          # -static so wandaac.exe carries no libstdc++/libgcc DLL dependency and
+          # genuinely runs with no toolchain on PATH.
+          g++ -std=c++17 -O2 -Wall -Wextra -static -o wandaac.exe src/lexer.cpp src/parser.cpp src/modules.cpp src/codegen.cpp src/main.cpp
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          g++ -std=c++17 -O2 -Wall -Wextra -static -o wandaa.exe src/cli.cpp
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
+      - name: Confirm no assembler or linker is used at compile time
+        shell: pwsh
+        run: |
+          # Compile with PATH stripped down to the system directories, so gcc,
+          # as and ld are unreachable. If wandaac still produces a working exe,
+          # the toolchain really is self-contained.
+          $saved = $env:PATH
+          $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot"
+          try {
+            .\wandaac.exe examples\gito.waa gito_bare.exe
+            if ($LASTEXITCODE -ne 0) { throw "wandaac failed with a bare PATH" }
+            $out = (& .\gito_bare.exe | Out-String).Trim()
+            if ($out -ne "1") { throw "expected '1', got '$out'" }
+            Write-Host "self-contained: compiled and ran with no toolchain on PATH"
+          } finally { $env:PATH = $saved }
+
+      - name: Run test suite
+        shell: pwsh
+        run: .\tests\run_tests.ps1
+
+  # Ground-truth checks that need GNU binutils. These gate the two things that
+  # cannot be eyeballed: that X64Asm agrees with a real assembler byte-for-byte,
+  # and that the checked-in runtime blob still matches runtime.s.
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install MinGW binutils
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends binutils-mingw-w64-x86-64
+
+      - name: Encoder ground truth vs GNU as
+        run: ./tools/enc/run_verify.sh
+
+      - name: Standard library docs match lib/
+        run: |
+          python3 tools/gen_stdlib_docs.py
+          if ! git diff --quiet --exit-code docs/isomero.md; then
+            echo "::error::docs/isomero.md is stale."
+            echo "Regenerate it with: python3 tools/gen_stdlib_docs.py"
+            git diff --stat docs/isomero.md
+            exit 1
+          fi
+          echo "stdlib docs are up to date"
+
+      - name: Runtime blob matches runtime.s
+        run: |
+          ./tools/build_runtime.sh
+          if ! git diff --quiet --exit-code include/runtime_blob.hpp; then
+            echo "::error::include/runtime_blob.hpp is stale."
+            echo "Regenerate it with tools/build_runtime.sh and commit the result."
+            git diff --stat include/runtime_blob.hpp
+            exit 1
+          fi
+          echo "runtime blob is up to date"
+
+  # Cross-check the generated executables actually run, on a second platform,
+  # via Wine. Catches anything that only shows up at execution time.
+  linux-wine:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Wine
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends wine64 wine
+
+      - name: Build wandaac
+        run: ./build.sh
+
+      - name: Run test suite under Wine
+        run: ./tests/run_tests.sh
+
+      - name: Project and package tool
+        run: ./tests/test_cli.sh

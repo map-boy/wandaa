@@ -1,6 +1,12 @@
+# Build output
 *.exe
 *.o
 *.obj
+wandaac
+
+# Generated assembler text from the old gcc pipeline. The hand-maintained
+# runtime source is NOT generated and must stay tracked.
 *.s
-!examples/*.waa
-wandaac.exe
+!tools/runtime/*.s
+
+/tests/_work/

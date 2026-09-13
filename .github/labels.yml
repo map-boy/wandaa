@@ -1,0 +1,78 @@
+# Issue and pull request labels for Wandaa.
+# Apply with:  gh label create -f .github/labels.yml   (or the GitHub UI)
+
+- name: good first issue
+  color: "7057ff"
+  description: Scoped small and does not need compiler internals knowledge
+
+- name: help wanted
+  color: "008672"
+  description: Looking for a contributor to pick this up
+
+- name: bug
+  color: "d73a4a"
+  description: Something in the compiler or runtime is wrong
+
+- name: design-proposal
+  color: "5319e7"
+  description: A WDP -- language change under discussion (see GOVERNANCE.md)
+
+- name: accepted
+  color: "0e8a16"
+  description: Design proposal accepted; ready to implement
+
+- name: declined
+  color: "b60205"
+  description: Design proposal declined, with reasoning recorded in the thread
+
+- name: written-in-wandaa
+  color: "fbca04"
+  description: Implemented in Wandaa itself, not C++ -- no compiler knowledge needed
+
+- name: codegen
+  color: "1d76db"
+  description: Code generator, x86-64 encoding, or PE output
+
+- name: runtime
+  color: "1d76db"
+  description: tools/runtime/runtime.s and the extracted blob
+
+- name: stdlib
+  color: "c2e0c6"
+  description: The standard library under lib/
+
+- name: ffi
+  color: "c2e0c6"
+  description: Calling into DLLs
+
+- name: docs
+  color: "0075ca"
+  description: Documentation and learning material
+
+- name: translation
+  color: "0075ca"
+  description: Kinyarwanda / English / French translation
+
+- name: tooling
+  color: "bfd4f2"
+  description: CLI, package manager, formatter, editor support
+
+- name: phase-1-language
+  color: "d4c5f9"
+  description: Roadmap Phase 1 -- language completeness
+
+- name: phase-3-data
+  color: "d4c5f9"
+  description: Roadmap Phase 3 -- databases
+
+- name: phase-4-web
+  color: "d4c5f9"
+  description: Roadmap Phase 4 -- web and servers
+
+- name: phase-5-ml
+  color: "d4c5f9"
+  description: Roadmap Phase 5 -- AI and machine learning
+
+- name: phase-6-selfhosting
+  color: "d4c5f9"
+  description: Roadmap Phase 6 -- Wandaa compiling itself

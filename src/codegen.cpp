@@ -1,9 +1,55 @@
+// ============================================================================
+//  src/codegen.cpp -- Wandaa code generation, straight to a Windows PE64 image
+// ============================================================================
+//
+//  Replaces the old "emit GNU-assembler text, shell out to gcc" backend. The
+//  compiler now writes the .exe itself, so end users need nothing but
+//  wandaac.exe -- no MinGW, no assembler, no linker.
+//
+//  Layout of the single RWX PE section (offsets are section-relative, which is
+//  the coordinate system PEWriter, X64Asm and the blob fixups all share):
+//
+//      +------------------+ 0
+//      | import block     |   descriptors, IAT slots, name tables  (PEWriter)
+//      +------------------+ blobBase  = pe.beginCode()
+//      | runtime blob     |   fixed runtime: print/string/file/crash/_start
+//      +------------------+ codeBase  = blobBase + RUNTIME_BLOB_SIZE
+//      | generated code   |   user functions, then wandaa_main
+//      +------------------+ dataBase  (8-byte aligned)
+//      | string literals  |   8-byte length header, bytes, NUL -- same layout
+//      +------------------+   as the old str_N_hdr / str_N pair
+//
+//  Three kinds of cross-region reference, all resolved before anything is
+//  handed to PEWriter:
+//
+//    generated code -> runtime     defineAbsLabel(blobBase + label offset),
+//                                  then an ordinary call rel32
+//    generated code -> IAT         defineAbsLabel(pe.iatSlotOffset(id)),
+//                                  then call qword ptr [rip+slot]
+//    runtime -> generated code     the one `call wandaa_main` in _start,
+//                                  patched from runtime_blob.hpp's CODE_FIXUPS
+//
+//  Everything above the emission layer is unchanged from the assembler-text
+//  backend: the same FnInfo frame layout, the same evalType/inferPass type
+//  inference, the same string and array representations, the same Win64
+//  calling convention, the same builtin name mapping.
+// ============================================================================
+
 #include "../include/codegen.hpp"
-#include <unordered_map>
-#include <sstream>
+#include "../include/pe_writer.hpp"
+#include "../include/x64asm.hpp"
+#include "../include/runtime_blob.hpp"
+
+#include <fstream>
+#include <map>
 #include <stdexcept>
+#include <string>
+#include <unordered_map>
+#include <vector>
 
 namespace {
+
+using R = X64Asm::Reg;
 
 enum class VType { Int, Str, Arr };
 
@@ -15,6 +61,12 @@ struct FnInfo {
   std::unordered_map<std::string,VType> types;
   int frameSize = 0;
 };
+
+// ===========================================================================
+//  Frame layout and type inference -- carried over verbatim from the previous
+//  backend. This logic never touched code emission and is unchanged, so the
+//  two backends agree on every variable slot and every inferred type.
+// ===========================================================================
 
 void collectNames(const NodePtr& n, std::vector<std::string>& out){
   if(!n) return;
@@ -55,6 +107,7 @@ VType evalType(const NodePtr& n, const std::unordered_map<std::string,VType>& ty
     }
     case NT::Un: return VType::Int;
     case NT::Bin:
+      if(n->sval=="&&" || n->sval=="||") return VType::Int;
       if(n->sval=="+" && evalType(n->kids[0],types)==VType::Str && evalType(n->kids[1],types)==VType::Str)
         return VType::Str;
       return VType::Int;
@@ -112,22 +165,35 @@ void inferPass(const NodePtr& n, std::unordered_map<std::string,VType>& types,
   for(auto& k : n->kids) inferPass(k, types, fnParamTypes);
 }
 
-std::string escape(const std::string& s){
-  std::string o;
-  for(char c : s){
-    if(c=='"' || c=='\\') o += '\\';
-    o += c;
-  }
-  return o;
-}
+// ===========================================================================
+//  Emission
+// ===========================================================================
+
+// Win64: first four integer arguments in RCX, RDX, R8, R9.
+const R ARG_REGS[4] = { X64Asm::RCX, X64Asm::RDX, X64Asm::R8, X64Asm::R9 };
+
+// The label the runtime blob's _start calls into. Distinct from "main" so a
+// Wandaa program may still define `umurimo main()` without colliding.
+const char* ENTRY_LABEL = "wandaa_main";
 
 struct Codegen {
-  std::ostringstream text;
+  PEWriter pe;
+  X64Asm   a;
+
   std::vector<std::string> strings;
   FnInfo* cur = nullptr;
   int labelCounter = 0;
   std::string epilogue;
   std::unordered_map<std::string,std::vector<VType>> fnParamTypes;
+
+  size_t blobBase = 0, codeBase = 0;
+  std::map<std::string,int> importId;     // "dll!func" -> PEWriter import id
+
+  // Functions declared with `hanze "some.dll" Name(...)`. These are called
+  // through the import address table rather than by rel32, which is what lets a
+  // Wandaa program reach any C ABI entry point the system exposes.
+  std::map<std::string,std::string> externs;   // function name -> DLL
+  std::vector<std::string> definedFns;    // for a better error than "undefined label"
 
   std::string newLabel(const std::string& p){ return p + "_" + std::to_string(labelCounter++); }
 
@@ -144,91 +210,211 @@ struct Codegen {
     return lbl;
   }
 
+  // ---- stack discipline --------------------------------------------------
+  //
+  // Win64 requires RSP to be 16-byte aligned at every CALL. After the prologue
+  // RSP is aligned (push rbp makes it so, and frameSize is rounded to 16), but
+  // expression evaluation pushes temporaries, so mid-expression it can sit at
+  // an odd multiple of 8. The old backend ignored this: `f(a, g(b))` called g
+  // with RSP % 16 == 8. Our own runtime never noticed -- it uses no SSE -- but
+  // any DLL that does (and FFI makes those reachable) would fault on a movaps.
+  //
+  // stackSlots counts the 8-byte temporaries currently below the frame, so
+  // every call site can insert 8 bytes of padding when the parity is wrong.
+  int stackSlots = 0;
+
+  // Innermost enclosing loop, for `hagarika` (break) and `komeza` (continue).
+  struct LoopLabels { std::string brk, cont; };
+  std::vector<LoopLabels> loops;
+
+  void pushTmp(R r){ a.push(r); ++stackSlots; }
+  void popTmp(R r) { a.pop(r);  --stackSlots; }
+
+  int callPad() const { return (stackSlots % 2) ? 8 : 0; }
+
+  // Call with arguments already in registers. Reserves the 32-byte shadow
+  // space Win64 requires (caller-cleaned), plus alignment padding.
+  void callRuntime(const std::string& rtLabel){
+    const int pad = callPad();
+    a.sub_imm(X64Asm::RSP, 32 + pad);
+    a.call_label(rtLabel);
+    a.add_imm(X64Asm::RSP, 32 + pad);
+  }
+  void callImport(const std::string& func){
+    const int pad = callPad();
+    a.sub_imm(X64Asm::RSP, 32 + pad);
+    a.call_mem_rip("__imp_" + func);
+    a.add_imm(X64Asm::RSP, 32 + pad);
+  }
+
+  // Evaluate `args` and call `target`, supporting any number of arguments.
+  //
+  // Win64 gives argument i its home at [rsp + 8*i] in the outgoing area -- the
+  // 32-byte shadow space IS the home for the first four. So the whole thing is
+  // one reservation: store every argument at [rsp + 8*i] as it is evaluated,
+  // then load the first four into RCX/RDX/R8/R9. That preserves left-to-right
+  // evaluation order (which matters when arguments have side effects), needs no
+  // shuffling for arguments five and up, and keeps RSP aligned throughout
+  // because a single aligned amount is reserved before any of it runs.
+  void emitCall(const std::string& target, const std::vector<NodePtr>& args, bool isImport){
+    const int n = (int)args.size();
+    const int homeSlots = (n > 4 ? n : 4);            // shadow space is always 4
+    const int pad = ((homeSlots + stackSlots) % 2) ? 8 : 0;
+    const int reserve = homeSlots * 8 + pad;
+
+    a.sub_imm(X64Asm::RSP, reserve);
+
+    // RSP is 16-byte aligned again inside this region, so nested calls in the
+    // argument expressions start from a clean parity.
+    const int savedSlots = stackSlots;
+    stackSlots = 0;
+
+    for(int i = 0; i < n; ++i){
+      genExpr(args[i]);
+      a.mov_store_base(X64Asm::RSP, i * 8, X64Asm::RAX);
+    }
+    for(int i = 0; i < n && i < 4; ++i)
+      a.mov_load_base(ARG_REGS[i], X64Asm::RSP, i * 8);
+
+    if(isImport) a.call_mem_rip("__imp_" + target);
+    else         a.call_label(target);
+
+    stackSlots = savedSlots;
+    a.add_imm(X64Asm::RSP, reserve);
+  }
+
+  // ---- expressions -------------------------------------------------------
+
   void genArrayLit(const NodePtr& n){
-    size_t count = n->kids.size();
-    text << "  sub rsp, 32\n  call GetProcessHeap\n  add rsp, 32\n";
-    text << "  mov rcx, rax\n  xor rdx, rdx\n  mov r8, " << (8 + count*8) << "\n";
-    text << "  sub rsp, 32\n  call HeapAlloc\n  add rsp, 32\n";
-    text << "  mov r12, rax\n";
-    text << "  mov qword ptr [r12], " << count << "\n";
+    const size_t count = n->kids.size();
+    // Heap-allocated, with an 8-byte element count ahead of the data, and the
+    // value of the expression pointing just past that header.
+    callImport("GetProcessHeap");
+    a.mov_reg(X64Asm::RCX, X64Asm::RAX);
+    a.xorr(X64Asm::RDX, X64Asm::RDX);
+    a.mov_imm(X64Asm::R8, (int64_t)(8 + count*8));
+    callImport("HeapAlloc");
+    a.mov_reg(X64Asm::R12, X64Asm::RAX);
+    a.mov_store_imm_base(X64Asm::R12, 0, (int32_t)count);
     for(size_t i=0;i<count;++i){
       genExpr(n->kids[i]);
-      text << "  mov [r12+8+" << (i*8) << "], rax\n";
+      // The old backend always emitted a disp8 here, which silently truncated
+      // past 15 elements. mov_store_base picks disp8/disp32 correctly.
+      a.mov_store_base(X64Asm::R12, (int32_t)(8 + i*8), X64Asm::RAX);
     }
-    text << "  lea rax, [r12+8]\n";
+    a.lea_base(X64Asm::RAX, X64Asm::R12, 8);
   }
 
   void genIndex(const NodePtr& n){
     genExpr(n->kids[0]);
-    text << "  push rax\n";
+    pushTmp(X64Asm::RAX);
     genExpr(n->kids[1]);
-    text << "  mov rbx, rax\n  pop rax\n";
-    text << "  mov rax, [rax+rbx*8]\n";
+    a.mov_reg(X64Asm::RBX, X64Asm::RAX);
+    popTmp(X64Asm::RAX);
+    a.mov_load_sib(X64Asm::RAX, X64Asm::RAX, X64Asm::RBX);
   }
 
   void genIndexAssign(const NodePtr& n){
     genExpr(n->kids[0]);
-    text << "  push rax\n";
+    pushTmp(X64Asm::RAX);
     genExpr(n->kids[1]);
-    text << "  mov rbx, rax\n  pop rax\n";
-    text << "  lea rax, [rax+rbx*8]\n  push rax\n";
+    a.mov_reg(X64Asm::RBX, X64Asm::RAX);
+    popTmp(X64Asm::RAX);
+    a.lea_sib(X64Asm::RAX, X64Asm::RAX, X64Asm::RBX);
+    pushTmp(X64Asm::RAX);
     genExpr(n->kids[2]);
-    text << "  pop rcx\n  mov [rcx], rax\n";
+    popTmp(X64Asm::RCX);
+    a.mov_store_base(X64Asm::RCX, 0, X64Asm::RAX);
   }
 
   void genExpr(const NodePtr& n){
     switch(n->type){
-      case NT::Num: text << "  mov rax, " << (long long)n->nval << "\n"; break;
-      case NT::Bool: text << "  mov rax, " << (n->bval?1:0) << "\n"; break;
-      case NT::Str: {
-        std::string lbl = addStringLiteral(n->sval);
-        text << "  lea rax, [rip+" << lbl << "]\n";
-        break;
-      }
-      case NT::ArrayLit: genArrayLit(n); break;
-      case NT::Index: genIndex(n); break;
+      case NT::Num:  a.mov_imm(X64Asm::RAX, (int64_t)n->nval); break;
+      case NT::Bool: a.mov_imm(X64Asm::RAX, n->bval ? 1 : 0);  break;
+      case NT::Str:  a.lea_rip(X64Asm::RAX, addStringLiteral(n->sval)); break;
+      case NT::ArrayLit:    genArrayLit(n); break;
+      case NT::Index:       genIndex(n); break;
       case NT::IndexAssign: genIndexAssign(n); break;
-      case NT::Var: text << "  mov rax, [rbp-" << curOffset(n->sval) << "]\n"; break;
-      case NT::Un: genExpr(n->kids[0]); text << "  neg rax\n"; break;
-      case NT::Assign: {
+      case NT::Var:  a.mov_load_rbp(X64Asm::RAX, -curOffset(n->sval)); break;
+      case NT::Un:
         genExpr(n->kids[0]);
-        text << "  mov [rbp-" << curOffset(n->sval) << "], rax\n";
+        if(n->sval=="!"){                  // si / ! -- logical negation to 0/1
+          a.test(X64Asm::RAX, X64Asm::RAX);
+          a.setcc("e");
+          a.movzx_rax_al();
+        } else {
+          a.neg(X64Asm::RAX);
+        }
         break;
-      }
+      case NT::Assign:
+        genExpr(n->kids[0]);
+        a.mov_store_rbp(-curOffset(n->sval), X64Asm::RAX);
+        break;
       case NT::Bin: {
-        bool bothStr = inferType(n->kids[0])==VType::Str && inferType(n->kids[1])==VType::Str;
+        // Short-circuit operators: the right side must not be evaluated when
+        // the left already decides the result.
+        if(n->sval=="&&" || n->sval=="||"){
+          const bool isAnd = n->sval=="&&";
+          const std::string Lshort = newLabel(isAnd ? "Land_false" : "Lor_true");
+          const std::string Lend   = newLabel("Lbool_end");
+
+          genExpr(n->kids[0]);
+          a.test(X64Asm::RAX, X64Asm::RAX);
+          if(isAnd) a.jz(Lshort); else a.jnz(Lshort);
+
+          genExpr(n->kids[1]);
+          a.test(X64Asm::RAX, X64Asm::RAX);
+          if(isAnd) a.jz(Lshort); else a.jnz(Lshort);
+
+          // Normalise to 0/1 rather than passing the operand value through.
+          a.mov_imm(X64Asm::RAX, isAnd ? 1 : 0);
+          a.jmp(Lend);
+          a.defineLabel(Lshort);
+          a.mov_imm(X64Asm::RAX, isAnd ? 0 : 1);
+          a.defineLabel(Lend);
+          break;
+        }
+
+        const bool bothStr = inferType(n->kids[0])==VType::Str && inferType(n->kids[1])==VType::Str;
+
         if(n->sval=="+" && bothStr){
           genExpr(n->kids[0]);
-          text << "  push rax\n";
+          pushTmp(X64Asm::RAX);
           genExpr(n->kids[1]);
-          text << "  mov rdx, rax\n  pop rcx\n";
-          text << "  sub rsp, 32\n  call wandaa_str_concat\n  add rsp, 32\n";
+          a.mov_reg(X64Asm::RDX, X64Asm::RAX);
+          popTmp(X64Asm::RCX);
+          callRuntime("wandaa_str_concat");
           break;
         }
         if((n->sval=="==" || n->sval=="!=") && bothStr){
           genExpr(n->kids[0]);
-          text << "  push rax\n";
+          pushTmp(X64Asm::RAX);
           genExpr(n->kids[1]);
-          text << "  mov rdx, rax\n  pop rcx\n";
-          text << "  sub rsp, 32\n  call wandaa_str_eq\n  add rsp, 32\n";
-          if(n->sval=="!=") text << "  xor rax, 1\n";
+          a.mov_reg(X64Asm::RDX, X64Asm::RAX);
+          popTmp(X64Asm::RCX);
+          callRuntime("wandaa_str_eq");
+          if(n->sval=="!=") a.xor_imm(X64Asm::RAX, 1);
           break;
         }
+
         genExpr(n->kids[0]);
-        text << "  push rax\n";
+        pushTmp(X64Asm::RAX);
         genExpr(n->kids[1]);
-        text << "  mov rbx, rax\n  pop rax\n";
+        a.mov_reg(X64Asm::RBX, X64Asm::RAX);
+        popTmp(X64Asm::RAX);
+
         const std::string& op = n->sval;
-        if(op=="+") text << "  add rax, rbx\n";
-        else if(op=="-") text << "  sub rax, rbx\n";
-        else if(op=="*") text << "  imul rax, rbx\n";
-        else if(op=="/") text << "  cqo\n  idiv rbx\n";
+        if      (op=="+") a.add(X64Asm::RAX, X64Asm::RBX);
+        else if (op=="-") a.sub(X64Asm::RAX, X64Asm::RBX);
+        else if (op=="*") a.imul(X64Asm::RAX, X64Asm::RBX);
+        else if (op=="/") { a.cqo(); a.idiv(X64Asm::RBX); }
         else {
-          text << "  cmp rax, rbx\n";
-          std::string setcc = op=="<" ? "setl" : op==">" ? "setg" :
-                               op=="<=" ? "setle" : op==">=" ? "setge" :
-                               op=="==" ? "sete" : "setne";
-          text << "  " << setcc << " al\n  movzx rax, al\n";
+          a.cmp(X64Asm::RAX, X64Asm::RBX);
+          const std::string cc = op=="<"  ? "l"  : op==">"  ? "g"  :
+                                 op=="<=" ? "le" : op==">=" ? "ge" :
+                                 op=="==" ? "e"  : "ne";
+          a.setcc(cc);
+          a.movzx_rax_al();
         }
         break;
       }
@@ -240,67 +426,96 @@ struct Codegen {
   void genCall(const NodePtr& n){
     static const std::unordered_map<std::string,std::string> builtins = {
       {"uburebure", "wandaa_str_len"},
-      {"ubunini", "wandaa_str_len"},
-      {"soma", "wandaa_read_file"},
-      {"andikamo", "wandaa_write_file"}
+      {"ubunini",   "wandaa_str_len"},
+      {"soma",      "wandaa_read_file"},
+      {"andikamo",  "wandaa_write_file"},
+      // Convert a raw NUL-terminated pointer returned by a `hanze` function
+      // into a Wandaa string. Needed because foreign strings carry no length
+      // header of their own.
+      {"ijambo",    "wandaa_str_from_c"},
+      {"inyuguti",  "wandaa_str_at"},      // byte at index, -1 if out of range
+      {"igice",     "wandaa_substr"},      // substring(start, len), clamped
+      {"mu_ijambo", "wandaa_int_to_str"},  // number -> string
+      {"mu_mubare", "wandaa_str_to_int"},  // string -> number
+      {"urutonde",  "wandaa_array_new"}    // zero-filled array of n elements
     };
     std::string target = n->sval;
     auto bit = builtins.find(target);
     if(bit != builtins.end()) target = bit->second;
-    if(n->kids.size() > 4) throw std::runtime_error("umurimo '" + n->sval + "' ufite parametero nyinshi (max 4)");
-    static const char* regs[4] = {"rcx","rdx","r8","r9"};
-    for(auto& a : n->kids){ genExpr(a); text << "  push rax\n"; }
-    for(int i=(int)n->kids.size()-1; i>=0; --i) text << "  pop " << regs[i] << "\n";
-    text << "  sub rsp, 32\n  call " << target << "\n  add rsp, 32\n";
+
+    const auto ext = externs.find(target);
+    if(ext != externs.end()){
+      if(bit != builtins.end())
+        throw std::runtime_error("izina '" + n->sval + "' ryamaze gufatwa na Wandaa");
+      emitCall(target, n->kids, /*isImport=*/true);
+      return;
+    }
+    emitCall(target, n->kids, /*isImport=*/false);
   }
 
   void genPrint(const NodePtr& n){
-    for(auto& a : n->kids){
-      if(inferType(a) == VType::Str){
-        genExpr(a);
-        text << "  mov rcx, rax\n";
-        text << "  sub rsp, 32\n  call wandaa_print_strval\n  add rsp, 32\n";
-      } else {
-        genExpr(a);
-        text << "  mov rcx, rax\n";
-        text << "  sub rsp, 32\n  call wandaa_print_int\n  add rsp, 32\n";
-      }
+    for(auto& arg : n->kids){
+      const bool isStr = inferType(arg) == VType::Str;
+      genExpr(arg);
+      a.mov_reg(X64Asm::RCX, X64Asm::RAX);
+      callRuntime(isStr ? "wandaa_print_strval" : "wandaa_print_int");
     }
   }
 
   void genStmt(const NodePtr& n){
-    if(n->line > 0) text << "  mov qword ptr [rip+wandaa_current_line], " << n->line << "\n";
+    // Line tracking for the crash handler. wandaa_current_line is an 8-byte
+    // slot inside the runtime blob's data region, reached RIP-relatively --
+    // this is where the old .bss .lcomm lived.
+    if(n->line > 0) a.mov_store_imm_rip("wandaa_current_line", n->line);
+
     switch(n->type){
-      case NT::VarDecl: genExpr(n->kids[0]); text << "  mov [rbp-" << curOffset(n->sval) << "], rax\n"; break;
-      case NT::ExprStmt: genExpr(n->kids[0]); break;
-      case NT::Print: genPrint(n); break;
-      case NT::If: {
-        std::string Lelse = newLabel("Lelse"), Lend = newLabel("Lend");
+      case NT::VarDecl:
         genExpr(n->kids[0]);
-        text << "  test rax, rax\n  jz " << Lelse << "\n";
+        a.mov_store_rbp(-curOffset(n->sval), X64Asm::RAX);
+        break;
+      case NT::ExprStmt: genExpr(n->kids[0]); break;
+      case NT::Print:    genPrint(n); break;
+      case NT::If: {
+        const std::string Lelse = newLabel("Lelse"), Lend = newLabel("Lend");
+        genExpr(n->kids[0]);
+        a.test(X64Asm::RAX, X64Asm::RAX);
+        a.jz(Lelse);
         genStmt(n->kids[1]);
-        text << "  jmp " << Lend << "\n" << Lelse << ":\n";
+        a.jmp(Lend);
+        a.defineLabel(Lelse);
         if(n->kids.size() > 2) genStmt(n->kids[2]);
-        text << Lend << ":\n";
+        a.defineLabel(Lend);
         break;
       }
       case NT::While: {
-        std::string Lstart = newLabel("Lstart"), Lend = newLabel("Lend");
-        text << Lstart << ":\n";
+        const std::string Lstart = newLabel("Lstart"), Lend = newLabel("Lend");
+        a.defineLabel(Lstart);
         genExpr(n->kids[0]);
-        text << "  test rax, rax\n  jz " << Lend << "\n";
+        a.test(X64Asm::RAX, X64Asm::RAX);
+        a.jz(Lend);
+        loops.push_back({Lend, Lstart});
         genStmt(n->kids[1]);
-        text << "  jmp " << Lstart << "\n" << Lend << ":\n";
+        loops.pop_back();
+        a.jmp(Lstart);
+        a.defineLabel(Lend);
         break;
       }
+      case NT::Break:
+        if(loops.empty()) throw std::runtime_error("'hagarika' iri hanze ya 'mugihe'");
+        a.jmp(loops.back().brk);
+        break;
+      case NT::Continue:
+        if(loops.empty()) throw std::runtime_error("'komeza' iri hanze ya 'mugihe'");
+        a.jmp(loops.back().cont);
+        break;
       case NT::Block: for(auto& k : n->kids) genStmt(k); break;
-      case NT::Return: {
+      case NT::Return:
         if(!n->kids.empty()) genExpr(n->kids[0]);
-        else text << "  xor eax, eax\n";
-        text << "  jmp " << epilogue << "\n";
+        else a.xor_eax_eax();
+        a.jmp(epilogue);
         break;
-      }
       case NT::FuncDecl: break;
+      case NT::ExternDecl: break;   // declaration only, emits nothing
       default: genExpr(n);
     }
   }
@@ -315,29 +530,94 @@ struct Codegen {
     collectTypesRec(body, fi.types);
     cur = &fi;
     epilogue = name + "_epilogue";
-    text << "\n" << name << ":\n  push rbp\n  mov rbp, rsp\n";
-    if(fi.frameSize > 0) text << "  sub rsp, " << fi.frameSize << "\n";
-    static const char* regs[4] = {"rcx","rdx","r8","r9"};
-    for(size_t i=0;i<params.size();++i)
-      text << "  mov [rbp-" << fi.offset.at(params[i]) << "], " << regs[i] << "\n";
+
+    a.defineLabel(name);
+    definedFns.push_back(name);
+
+    // push rbp is part of the frame, not a temporary: RSP is 16-byte aligned
+    // again once the (16-rounded) frame is subtracted, so reset the counter.
+    a.push(X64Asm::RBP);
+    a.mov_reg(X64Asm::RBP, X64Asm::RSP);
+    stackSlots = 0;
+    if(fi.frameSize > 0) a.sub_imm(X64Asm::RSP, fi.frameSize);
+
+    // Spill incoming arguments into their frame slots.
+    //
+    // Arguments 0-3 arrive in registers. Arguments 5 and up were written by the
+    // caller into the outgoing area; after `push rbp; mov rbp, rsp` argument i's
+    // home sits at [rbp + 16 + 8*i] (8 for the return address, 8 for the saved
+    // rbp), which is where emitCall placed it as [rsp + 8*i].
+    for(size_t i=0;i<params.size();++i){
+      const int slot = -fi.offset.at(params[i]);
+      if(i < 4){
+        a.mov_store_rbp(slot, ARG_REGS[i]);
+      } else {
+        a.mov_load_rbp(X64Asm::RAX, (int32_t)(16 + 8*i));
+        a.mov_store_rbp(slot, X64Asm::RAX);
+      }
+    }
+
     genStmt(body);
-    text << "  xor eax, eax\n" << epilogue << ":\n";
-    if(fi.frameSize > 0) text << "  add rsp, " << fi.frameSize << "\n";
-    text << "  pop rbp\n  ret\n";
+
+    a.xor_eax_eax();
+    a.defineLabel(epilogue);
+    if(fi.frameSize > 0) a.add_imm(X64Asm::RSP, fi.frameSize);
+    a.pop(X64Asm::RBP);
+    a.ret();
   }
 
-  std::string generate(const NodePtr& program){
+  // ---- data area ---------------------------------------------------------
+  // One entry per string literal, laid out exactly as the old .data block:
+  //
+  //     .align 8
+  //     str_N_hdr: .quad <length>
+  //     str_N:     .ascii "..."
+  //                .byte 0
+  //
+  // so wandaa_str_len's `mov rax, [rcx-8]` finds the length where it expects.
+  std::vector<uint8_t> buildDataArea(size_t dataBase){
+    std::vector<uint8_t> data;
+    for(size_t i=0;i<strings.size();++i){
+      while((dataBase + data.size()) % 8 != 0) data.push_back(0);
+      const std::string& s = strings[i];
+      const uint64_t len = s.size();
+      for(int b=0;b<8;++b) data.push_back((uint8_t)((len >> (8*b)) & 0xFF));
+      a.defineAbsLabel("str_" + std::to_string(i), dataBase + data.size());
+      data.insert(data.end(), s.begin(), s.end());
+      data.push_back(0);
+    }
+    return data;
+  }
+
+  // ---- driver ------------------------------------------------------------
+
+  std::vector<uint8_t> generate(const NodePtr& program){
+    g_fnReturnTypes.clear();
+    g_arrElemTypes.clear();
     g_fnReturnTypes["soma"] = VType::Str;
+    g_fnReturnTypes["ijambo"] = VType::Str;
+    g_fnReturnTypes["igice"] = VType::Str;
+    g_fnReturnTypes["mu_ijambo"] = VType::Str;
 
     std::vector<NodePtr> funcs, rest;
     for(auto& k : program->kids){
       if(k->type==NT::FuncDecl) funcs.push_back(k);
+      else if(k->type==NT::ExternDecl){
+        // Declaration only -- it emits no code, it just tells the linker-less
+        // backend to put this function in the import table.
+        auto prev = externs.find(k->sval);
+        if(prev != externs.end() && prev->second != k->sval2)
+          throw std::runtime_error("umurimo wo hanze '" + k->sval +
+                                   "' watangajwe kabiri muri DLL zitandukanye: " +
+                                   prev->second + " na " + k->sval2);
+        externs[k->sval] = k->sval2;
+      }
       else rest.push_back(k);
     }
-
     auto restBlock = mk(NT::Block);
     restBlock->kids = rest;
 
+    // Type inference to a fixed point, unchanged from the old backend.
     for(int iter=0; iter<4; ++iter){
       {
         std::unordered_map<std::string,VType> types;
@@ -358,238 +638,123 @@ struct Codegen {
       }
     }
 
-    for(auto& f : funcs) genFunction(f->sval, f->params, f->kids[0]);
-    genFunction("main", {}, restBlock);
-
-    std::ostringstream data;
-    data << ".data\n";
-    for(size_t i=0;i<strings.size();++i){
-      data << ".align 8\n";
-      data << "str_" << i << "_hdr: .quad " << strings[i].size() << "\n";
-      data << "str_" << i << ": .ascii \"" << escape(strings[i]) << "\"\n";
-      data << "  .byte 0\n";
+    // --- 1. imports -------------------------------------------------------
+    // Every function the runtime blob calls, plus the two the generated code
+    // calls directly for array literals. Registering from the blob's own fixup
+    // table means a new API call in runtime.s needs no change here.
+    for(size_t i=0;i<wandaa_rt::IMPORT_FIXUP_COUNT;++i){
+      const auto& fx = wandaa_rt::IMPORT_FIXUPS[i];
+      const std::string key = std::string(fx.dll) + "!" + fx.func;
+      if(!importId.count(key)) importId[key] = pe.addImport(fx.dll, fx.func);
     }
-    data << ".align 8\nempty_str_hdr: .quad 0\nempty_str:\nnl_char: .byte 10\n";
-    data << "crash_msg: .ascii \"Ikosa ku murongo: \"\ncrash_msg_len = . - crash_msg\n";
+    for(const char* fn : {"GetProcessHeap", "HeapAlloc"}){
+      const std::string key = std::string("kernel32.dll!") + fn;
+      if(!importId.count(key)) importId[key] = pe.addImport("kernel32.dll", fn);
+    }
+    // Anything the program declared with `hanze`.
+    for(const auto& ex : externs){
+      const std::string key = ex.second + "!" + ex.first;
+      if(!importId.count(key)) importId[key] = pe.addImport(ex.second, ex.first);
+    }
 
-    std::ostringstream bss;
-    bss << ".bss\n.lcomm hStdOut, 8\n.lcomm bytesWritten, 8\n.lcomm intbuf, 32\n.lcomm wandaa_current_line, 8\n";
+    // --- 2. section layout ------------------------------------------------
+    // The import block leaves the cursor at an arbitrary offset. Pad the blob
+    // up to 16 bytes so the .p2align directives inside runtime.s actually mean
+    // something once the blob is relocated -- otherwise wandaa_hStdOut and
+    // friends land on whatever alignment the import name table happened to end
+    // on. Nothing here faults when misaligned, but honouring the alignment the
+    // source asked for keeps the blob's layout exactly as assembled.
+    const size_t rawBase = pe.beginCode();
+    const size_t blobPad = (16 - (rawBase % 16)) % 16;
+    blobBase = rawBase + blobPad;
+    codeBase = blobBase + wandaa_rt::RUNTIME_BLOB_SIZE;
+    a.setBaseOffset(codeBase);
 
-    std::ostringstream rt2;
-    rt2 << "\n"
-       << "init_stdout:\n"
-       << "  push rbp\n  mov rbp, rsp\n  sub rsp, 32\n"
-       << "  mov ecx, -11\n  call GetStdHandle\n"
-       << "  mov [rip+hStdOut], rax\n"
-       << "  add rsp, 32\n  pop rbp\n  ret\n\n"
-       << "wandaa_print_str:\n"
-       << "  push rbp\n  mov rbp, rsp\n  sub rsp, 48\n"
-       << "  mov r8d, edx\n  mov rdx, rcx\n  mov rcx, [rip+hStdOut]\n"
-       << "  lea r9, [rip+bytesWritten]\n"
-       << "  mov qword ptr [rsp+32], 0\n"
-       << "  call WriteFile\n"
-       << "  add rsp, 48\n  pop rbp\n  ret\n\n"
-       << "wandaa_crash_handler:\n"
-       << "  push rbp\n  mov rbp, rsp\n"
-       << "  lea rcx, [rip+crash_msg]\n  mov edx, crash_msg_len\n"
-       << "  sub rsp, 32\n  call wandaa_print_str\n  add rsp, 32\n"
-       << "  mov rcx, [rip+wandaa_current_line]\n"
-       << "  sub rsp, 32\n  call wandaa_print_int\n  add rsp, 32\n"
-       << "  mov ecx, 1\n"
-       << "  sub rsp, 32\n  call ExitProcess\n"
-       << "  pop rbp\n  ret\n\n"
-       << "wandaa_print_int:\n"
-       << "  push rbp\n  mov rbp, rsp\n  sub rsp, 48\n"
-       << "  push rbx\n"
-       << "  sub rsp, 8\n"
-       << "  mov rax, rcx\n"
-       << "  xor r10, r10\n  xor r11, r11\n"
-       << "  cmp rax, 0\n  jge pi_pos\n"
-       << "  mov r11, 1\n  neg rax\n"
-       << "pi_pos:\n"
-       << "  lea rbx, [rip+intbuf]\n  add rbx, 30\n"
-       << "  mov byte ptr [rbx], 10\n"
-       << "pi_loop:\n"
-       << "  xor rdx, rdx\n  mov rcx, 10\n  div rcx\n"
-       << "  add dl, 48\n"
-       << "  dec rbx\n  mov [rbx], dl\n"
-       << "  inc r10\n"
-       << "  cmp rax, 0\n  jne pi_loop\n"
-       << "  cmp r11, 0\n  je pi_nosign\n"
-       << "  dec rbx\n  mov byte ptr [rbx], 45\n  inc r10\n"
-       << "pi_nosign:\n"
-       << "  mov rcx, rbx\n  mov rdx, r10\n  inc rdx\n"
-       << "  call wandaa_print_str\n"
-       << "  add rsp, 8\n"
-       << "  pop rbx\n"
-       << "  add rsp, 48\n  pop rbp\n  ret\n\n"
-       << "wandaa_str_len:\n"
-       << "  mov rax, [rcx-8]\n"
-       << "  ret\n\n"
-       << "wandaa_print_strval:\n"
-       << "  push rbp\n  mov rbp, rsp\n  sub rsp, 48\n"
-       << "  push rbx\n"
-       << "  sub rsp, 8\n"
-       << "  mov rbx, rcx\n"
-       << "  mov rdx, [rbx-8]\n"
-       << "  mov rcx, rbx\n"
-       << "  call wandaa_print_str\n"
-       << "  lea rcx, [rip+nl_char]\n"
-       << "  mov rdx, 1\n"
-       << "  call wandaa_print_str\n"
-       << "  add rsp, 8\n"
-       << "  pop rbx\n"
-       << "  add rsp, 48\n  pop rbp\n  ret\n\n"
-       << "wandaa_str_concat:\n"
-       << "  push rbp\n  mov rbp, rsp\n  sub rsp, 64\n"
-       << "  push rbx\n  push rsi\n  push rdi\n  push r12\n  push r13\n  push r14\n  push r15\n"
-       << "  sub rsp, 8\n"
-       << "  mov r12, rcx\n"
-       << "  mov r13, rdx\n"
-       << "  mov rax, [r12-8]\n"
-       << "  mov rbx, rax\n"
-       << "  add rbx, [r13-8]\n"
-       << "  sub rsp, 32\n  call GetProcessHeap\n  add rsp, 32\n"
-       << "  mov r14, rax\n"
-       << "  mov rcx, r14\n"
-       << "  xor rdx, rdx\n"
-       << "  lea r8, [rbx+9]\n"
-       << "  sub rsp, 32\n  call HeapAlloc\n  add rsp, 32\n"
-       << "  mov r15, rax\n"
-       << "  mov [r15], rbx\n"
-       << "  mov rsi, r12\n"
-       << "  lea rdi, [r15+8]\n"
-       << "  mov rcx, [r12-8]\n"
-       << "  rep movsb\n"
-       << "  mov rsi, r13\n"
-       << "  mov rcx, [r13-8]\n"
-       << "  rep movsb\n"
-       << "  mov byte ptr [rdi], 0\n"
-       << "  lea rax, [r15+8]\n"
-       << "  add rsp, 8\n"
-       << "  pop r15\n  pop r14\n  pop r13\n  pop r12\n  pop rdi\n  pop rsi\n  pop rbx\n"
-       << "  add rsp, 64\n  pop rbp\n  ret\n\n"
-       << "wandaa_str_eq:\n"
-       << "  push rbx\n  push rsi\n  push rdi\n"
-       << "  mov rax, [rcx-8]\n"
-       << "  cmp rax, [rdx-8]\n"
-       << "  jne streq_false\n"
-       << "  mov rsi, rcx\n  mov rdi, rdx\n  mov rcx, rax\n"
-       << "  repe cmpsb\n"
-       << "  jne streq_false\n"
-       << "  mov rax, 1\n  jmp streq_done\n"
-       << "streq_false:\n"
-       << "  xor rax, rax\n"
-       << "streq_done:\n"
-       << "  pop rdi\n  pop rsi\n  pop rbx\n"
-       << "  ret\n\n"
-       << "wandaa_read_file:\n"
-       << "  push rbp\n  mov rbp, rsp\n  sub rsp, 64\n"
-       << "  push rbx\n  push r12\n  push r13\n\n"
-       << "  sub rsp, 8\n"
-       << "  mov r12, rcx\n"
-       << "  mov rcx, r12\n"
-       << "  mov edx, 0x80000000\n"
-       << "  mov r8, 1\n"
-       << "  xor r9, r9\n"
-       << "  mov qword ptr [rsp+32], 3\n"
-       << "  mov qword ptr [rsp+40], 0x80\n"
-       << "  mov qword ptr [rsp+48], 0\n"
-       << "  call CreateFileA\n"
-       << "  cmp rax, -1\n"
-       << "  je rf_fail\n"
-       << "  mov rbx, rax\n"
-       << "  mov rcx, rbx\n"
-       << "  xor rdx, rdx\n"
-       << "  call GetFileSize\n"
-       << "  mov r13, rax\n"
-       << "  call GetProcessHeap\n"
-       << "  mov rcx, rax\n"
-       << "  xor rdx, rdx\n"
-       << "  lea r8, [r13+9]\n"
-       << "  call HeapAlloc\n"
-       << "  mov [rax], r13\n"
-       << "  mov r12, rax\n"
-       << "  mov rcx, rbx\n"
-       << "  lea rdx, [r12+8]\n"
-       << "  mov r8, r13\n"
-       << "  lea r9, [rip+bytesWritten]\n"
-       << "  mov qword ptr [rsp+32], 0\n"
-       << "  call ReadFile\n"
-       << "  test eax, eax\n"
-       << "  jnz rf_readok\n"
-       << "  call GetLastError\n"
-       << "  mov rcx, rax\n"
-       << "  sub rsp, 32\n  call wandaa_print_int\n  add rsp, 32\n"
-       << "rf_readok:\n"
-       << "  mov rcx, rbx\n"
-       << "  call CloseHandle\n"
-       << "  lea rbx, [r12+8]\n"
-       << "  add rbx, r13\n"
-       << "  mov byte ptr [rbx], 0\n"
-       << "  lea rax, [r12+8]\n"
-       << "  jmp rf_done\n"
-       << "rf_fail:\n"
-       << "  lea rax, [rip+empty_str]\n"
-       << "rf_done:\n"
-       << "  add rsp, 8\n"
-       << "  pop r13\n  pop r12\n  pop rbx\n"
-       << "  add rsp, 64\n  pop rbp\n  ret\n\n"
-       << "wandaa_write_file:\n"
-       << "  push rbp\n  mov rbp, rsp\n  sub rsp, 64\n"
-       << "  push rbx\n  push r12\n  push r13\n"
-       << "  sub rsp, 8\n"
-       << "  mov r12, rcx\n"
-       << "  mov r13, rdx\n"
-       << "  mov rcx, r12\n"
-       << "  mov edx, 0x40000000\n"
-       << "  xor r8, r8\n"
-       << "  xor r9, r9\n"
-       << "  mov qword ptr [rsp+32], 2\n"
-       << "  mov qword ptr [rsp+40], 0x80\n"
-       << "  mov qword ptr [rsp+48], 0\n"
-       << "  call CreateFileA\n"
-       << "  cmp rax, -1\n"
-       << "  je wf_fail\n"
-       << "  mov rbx, rax\n"
-       << "  mov rcx, rbx\n"
-       << "  mov rdx, r13\n"
-       << "  mov r8, [r13-8]\n"
-       << "  lea r9, [rip+bytesWritten]\n"
-       << "  mov qword ptr [rsp+32], 0\n"
-       << "  call WriteFile\n"
-       << "  mov rcx, rbx\n"
-       << "  call CloseHandle\n"
-       << "  mov rax, 1\n"
-       << "  jmp wf_done\n"
-       << "wf_fail:\n"
-       << "  xor rax, rax\n"
-       << "wf_done:\n"
-       << "  add rsp, 8\n"
-       << "  pop r13\n  pop r12\n  pop rbx\n"
-       << "  add rsp, 64\n  pop rbp\n  ret\n\n"
-       << "_start:\n"
-       << "  sub rsp, 40\n  call init_stdout\n  add rsp, 40\n"
-       << "  sub rsp, 40\n  mov rcx, 1\n  lea rdx, [rip+wandaa_crash_handler]\n  call AddVectoredExceptionHandler\n  add rsp, 40\n"
-       << "  sub rsp, 40\n  call main\n  add rsp, 40\n"
-       << "  mov ecx, eax\n"
-       << "  sub rsp, 40\n  call ExitProcess\n"
-       << "  hlt\n";
+    // Runtime entry points and data slots become ordinary labels.
+    for(size_t i=0;i<wandaa_rt::LABEL_COUNT;++i)
+      a.defineAbsLabel(wandaa_rt::LABELS[i].name, blobBase + wandaa_rt::LABELS[i].off);
 
-    std::ostringstream full;
-    full << ".intel_syntax noprefix\n"
-         << data.str() << bss.str()
-         << ".text\n.globl _start\n"
-         << ".extern WriteFile\n.extern GetStdHandle\n.extern ExitProcess\n.extern GetProcessHeap\n.extern HeapAlloc\n"
-         << ".extern CreateFileA\n.extern GetFileSize\n.extern ReadFile\n.extern CloseHandle\n.extern GetLastError\n.extern AddVectoredExceptionHandler\n"
-         << text.str() << rt2.str();
-    return full.str();
+    // IAT slots likewise, so generated code can `call [rip+__imp_X]`.
+    for(const auto& kv : importId){
+      const std::string func = kv.first.substr(kv.first.find('!') + 1);
+      a.defineAbsLabel("__imp_" + func, pe.iatSlotOffset(kv.second));
+    }
+
+    // --- 3. generated code ------------------------------------------------
+    for(auto& f : funcs) genFunction(f->sval, f->params, f->kids[0]);
+    const size_t mainOffset = codeBase + a.code.size();
+    genFunction(ENTRY_LABEL, {}, restBlock);
+
+    // --- 4. string data, then resolve every fixup -------------------------
+    size_t dataBase = codeBase + a.code.size();
+    dataBase = (dataBase + 7) & ~(size_t)7;
+    const size_t codePad = dataBase - (codeBase + a.code.size());
+    std::vector<uint8_t> data = buildDataArea(dataBase);
+
+    try {
+      a.resolveFixups();
+    } catch(const std::exception& e){
+      // Turn "undefined label: foo" into something a Wandaa programmer can act on.
+      const std::string what = e.what();
+      const std::string pfx = "undefined label: ";
+      if(what.rfind(pfx, 0) == 0)
+        throw std::runtime_error("umurimo utazwi: " + what.substr(pfx.size()));
+      throw;
+    }
+
+    // --- 5. patch the runtime blob ---------------------------------------
+    std::vector<uint8_t> blob(wandaa_rt::RUNTIME_BLOB,
+                              wandaa_rt::RUNTIME_BLOB + wandaa_rt::RUNTIME_BLOB_SIZE);
+
+    auto patch32 = [&](std::vector<uint8_t>& buf, size_t off, int32_t v){
+      for(int b=0;b<4;++b) buf[off+b] = (uint8_t)(((uint32_t)v >> (8*b)) & 0xFF);
+    };
+
+    // Each `call [rip+__imp_X]` in the blob was assembled against a placeholder.
+    // Repoint it at PEWriter's IAT slot. The displacement is measured from the
+    // end of the instruction, which is the 4-byte field itself.
+    for(size_t i=0;i<wandaa_rt::IMPORT_FIXUP_COUNT;++i){
+      const auto& fx = wandaa_rt::IMPORT_FIXUPS[i];
+      const std::string key = std::string(fx.dll) + "!" + fx.func;
+      const size_t slot = pe.iatSlotOffset(importId.at(key));
+      const int64_t site = (int64_t)(blobBase + fx.site);
+      patch32(blob, fx.site, (int32_t)((int64_t)slot + fx.addend - (site + 4)));
+    }
+
+    // The single blob -> generated-code edge: _start's `call wandaa_main`.
+    for(size_t i=0;i<wandaa_rt::CODE_FIXUP_COUNT;++i){
+      const auto& fx = wandaa_rt::CODE_FIXUPS[i];
+      if(std::string(fx.symbol) != ENTRY_LABEL)
+        throw std::runtime_error("runtime blob references an unknown symbol: " +
+                                 std::string(fx.symbol));
+      const int64_t site = (int64_t)(blobBase + fx.site);
+      patch32(blob, fx.site, (int32_t)((int64_t)mainOffset + fx.addend - (site + 4)));
+    }
+
+    // --- 6. assemble the image -------------------------------------------
+    if(blobPad) pe.emit(std::vector<uint8_t>(blobPad, 0));
+    pe.emit(blob);
+    pe.emit(a.code);
+    if(codePad) pe.emit(std::vector<uint8_t>(codePad, 0));
+    pe.emit(data);
+    pe.setEntryOffset(blobBase + wandaa_rt::labelOffset("_start"));
+
+    return pe.buildImage();
   }
 };
 
-}
+} // namespace
 
-std::string generateAsm(const NodePtr& program){
+std::vector<uint8_t> generateExeBytes(const NodePtr& program){
   Codegen cg;
   return cg.generate(program);
+}
+
+void generateExe(const NodePtr& program, const std::string& outPath){
+  Codegen cg;
+  const std::vector<uint8_t> image = cg.generate(program);
+  std::ofstream out(outPath, std::ios::binary);
+  if(!out) throw std::runtime_error("ntidushoboye kwandika: " + outPath);
+  out.write((const char*)image.data(), (std::streamsize)image.size());
+  if(!out.good()) throw std::runtime_error("ikosa mu kwandika: " + outPath);
 }

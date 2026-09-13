@@ -1,0 +1,31 @@
+umurimo boom(x) { andika("boom yahamagawe"); tanga x; }
+
+andika(1 na 1);
+andika(1 na 0);
+andika(0 cyangwa 1);
+andika(0 cyangwa 0);
+andika(si 0);
+andika(si 5);
+andika(!0);
+andika(1 && 1);
+andika(0 || 1);
+
+# Short-circuit: boom must NOT run in either line.
+andika(0 na boom(1));
+andika(1 cyangwa boom(1));
+
+reka x = 5;
+niba (x > 0 na x < 10) { andika("hagati"); } ubundi { andika("hanze"); }
+niba (x < 0 cyangwa x > 3) { andika("byemewe"); }
+
+# hagarika / komeza
+reka i = 0;
+reka s = 0;
+mugihe (1) {
+  i = i + 1;
+  niba (i > 10) { hagarika; }
+  niba (i == 3) { komeza; }
+  s = s + i;
+}
+andika(s);
+andika(i);
