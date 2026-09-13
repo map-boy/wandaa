@@ -1,0 +1,32 @@
+﻿{
+  "scopeName": "source.wandaa",
+  "name": "Wandaa",
+  "patterns": [
+    { "include": "#keywords" },
+    { "include": "#strings" },
+    { "include": "#numbers" },
+    { "include": "#operators" }
+  ],
+  "repository": {
+    "keywords": {
+      "patterns": [
+        { "name": "keyword.control.wandaa", "match": "\\b(reka|niba|ubundi|mugihe|umurimo|tanga|andika)\\b" },
+        { "name": "constant.language.wandaa", "match": "\\b(nibyo|oya)\\b" }
+      ]
+    },
+    "strings": {
+      "name": "string.quoted.double.wandaa",
+      "begin": "\"",
+      "end": "\"",
+      "patterns": [ { "name": "constant.character.escape.wandaa", "match": "\\\\." } ]
+    },
+    "numbers": {
+      "name": "constant.numeric.wandaa",
+      "match": "\\b[0-9]+(\\.[0-9]+)?\\b"
+    },
+    "operators": {
+      "name": "keyword.operator.wandaa",
+      "match": "[+*/=<>!-]+"
+    }
+  }
+}

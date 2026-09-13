@@ -1,0 +1,25 @@
+﻿{
+  "name": "wandaa-language",
+  "displayName": "Wandaa Language",
+  "description": "Syntax highlighting for the Wandaa programming language",
+  "version": "0.0.1",
+  "engines": { "vscode": "^1.60.0" },
+  "categories": ["Programming Languages"],
+  "contributes": {
+    "languages": [
+      {
+        "id": "wandaa",
+        "aliases": ["Wandaa", "wandaa"],
+        "extensions": [".waa"],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "wandaa",
+        "scopeName": "source.wandaa",
+        "path": "./syntaxes/wandaa.tmLanguage.json"
+      }
+    ]
+  }
+}

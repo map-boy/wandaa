@@ -829,8 +829,12 @@ struct Codegen {
         inferPass(f->kids[0], types, fnParamTypes);
         bool found=false; VType rt=VType::Int;
         findReturnType(f->kids[0], types, found, rt);
-        if(rt==VType::Str) g_fnReturnTypes[f->sval] = VType::Str;
-        else if(!g_fnReturnTypes.count(f->sval)) g_fnReturnTypes[f->sval] = rt;
+        auto priority = [](VType t){
+          switch(t){ case VType::Str: return 2; case VType::Float: return 1; default: return 0; }
+        };
+        auto exist = g_fnReturnTypes.find(f->sval);
+        if(exist == g_fnReturnTypes.end() || priority(rt) > priority(exist->second))
+          g_fnReturnTypes[f->sval] = rt;
       }
     }
 

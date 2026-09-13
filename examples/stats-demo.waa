@@ -1,0 +1,13 @@
+﻿injiza "imibare-stats.waa";
+
+reka ibipimo = urutonde(8);
+ibipimo[0] = 12.5;
+ibipimo[1] = 9.0;
+ibipimo[2] = 15.75;
+ibipimo[3] = 10.0;
+ibipimo[4] = 22.25;
+ibipimo[5] = 8.5;
+ibipimo[6] = 19.0;
+ibipimo[7] = 14.0;
+
+st_incamake(ibipimo);

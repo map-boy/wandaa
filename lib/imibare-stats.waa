@@ -1,0 +1,110 @@
+﻿# ============================================================================
+#  imibare-stats.waa -- ibarurishamibare ry'ibice (f64 descriptive statistics)
+# ============================================================================
+#  injiza "imibare-stats.waa";
+#
+#  Ikora ku ntonde z'ibice (f64 arrays). Ntabwo ihindura urutonde rw'umwimerere
+#  -- operates on f64 arrays; never mutates the array you pass in.
+
+injiza "imibare.waa";
+injiza "urutonde.waa";
+
+# Igiteranyo -- sum of an f64 array. Accumulator starts as a float (0.0), not
+# an int, so it never mixes types with the elements it adds.
+umurimo st_igiteranyo(a) {
+  reka s = 0.0;
+  reka i = 0;
+  mugihe (i < ubunini(a)) {
+    s = s + a[i];
+    i = i + 1;
+  }
+  tanga s;
+}
+
+# Impuzandengo -- arithmetic mean.
+umurimo st_impuzandengo(a) {
+  reka n = ubunini(a);
+  niba (n == 0) { tanga 0.0; }
+  tanga st_igiteranyo(a) / mu_bice(n);
+}
+
+# Umuzi w'ibice -- f64 square root via Newton-Raphson. There is no float sqrt
+# builtin yet (and reading a double back from a hanze DLL call isn't wired up
+# yet either), so this stays in pure Wandaa.
+umurimo st_umuzi(x) {
+  niba (x <= 0.0) { tanga 0.0; }
+  reka igitekerezo = x;
+  reka i = 0;
+  mugihe (i < 40) {
+    igitekerezo = (igitekerezo + x / igitekerezo) / 2.0;
+    i = i + 1;
+  }
+  tanga igitekerezo;
+}
+
+# Impinduka -- population variance.
+umurimo st_impinduka(a) {
+  reka n = ubunini(a);
+  niba (n == 0) { tanga 0.0; }
+  reka mu = st_impuzandengo(a);
+  reka igiteranyo_c = 0.0;
+  reka i = 0;
+  mugihe (i < n) {
+    reka itandukaniro = a[i] - mu;
+    igiteranyo_c = igiteranyo_c + itandukaniro * itandukaniro;
+    i = i + 1;
+  }
+  tanga igiteranyo_c / mu_bice(n);
+}
+
+# Kwiyongera guhoraho -- population standard deviation.
+umurimo st_kwiyongera(a) {
+  tanga st_umuzi(st_impinduka(a));
+}
+
+# Munsi -- minimum (reuses urutonde.waa; works on floats since it takes its
+# type from a[0] rather than a hardcoded literal).
+umurimo st_munsi(a) { tanga ntoya_muri(a); }
+
+# Hejuru -- maximum.
+umurimo st_hejuru(a) { tanga nini_muri(a); }
+
+# Intera -- range (max - min).
+umurimo st_intera(a) {
+  niba (ubunini(a) == 0) { tanga 0.0; }
+  tanga st_hejuru(a) - st_munsi(a);
+}
+
+# Hagati -- median. Sorts a copy; never touches the caller's array.
+umurimo st_hagati(a) {
+  reka n = ubunini(a);
+  niba (n == 0) { tanga 0.0; }
+  reka b = gushyira_ku_murongo(a);
+  reka hagati_index = n / 2;
+  niba (igisigara(n, 2) == 1) {
+    tanga b[hagati_index];
+  }
+  tanga (b[hagati_index - 1] + b[hagati_index]) / 2.0;
+}
+
+# Incamake -- prints a one-shot summary of an f64 array.
+umurimo st_incamake(a) {
+  andika("umubare w'ibipimo:");
+  andika(ubunini(a));
+  andika("igiteranyo:");
+  andika(st_igiteranyo(a));
+  andika("impuzandengo:");
+  andika(st_impuzandengo(a));
+  andika("munsi:");
+  andika(st_munsi(a));
+  andika("hejuru:");
+  andika(st_hejuru(a));
+  andika("intera:");
+  andika(st_intera(a));
+  andika("hagati (median):");
+  andika(st_hagati(a));
+  andika("impinduka (variance):");
+  andika(st_impinduka(a));
+  andika("kwiyongera (stddev):");
+  andika(st_kwiyongera(a));
+}
