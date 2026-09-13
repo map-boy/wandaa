@@ -1,0 +1,17 @@
+﻿name: build
+on: [push, pull_request]
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install MinGW
+        run: choco install mingw -y
+      - name: Build and run all examples
+        shell: pwsh
+        run: |
+          $examples = Get-ChildItem examples\*.waa
+          foreach ($f in $examples) {
+            .\build.ps1 $f.FullName
+            if ($LASTEXITCODE -ne 0) { exit 1 }
+          }
