@@ -270,6 +270,8 @@ int main(int argc, char** argv) {
     for (const char* required : {"_start", "wandaa_print_int", "wandaa_print_strval",
                                  "wandaa_print_str", "wandaa_str_len", "wandaa_str_concat",
                                  "wandaa_str_eq", "wandaa_read_file", "wandaa_write_file",
+                                 "wandaa_str_from_c", "wandaa_str_at", "wandaa_substr",
+                                 "wandaa_int_to_str", "wandaa_str_to_int", "wandaa_array_new",
                                  "wandaa_current_line", "wandaa_empty_str"}) {
         if (!labels.count(required))
             fail(std::string("required label '") + required +

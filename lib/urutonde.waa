@@ -1,0 +1,87 @@
+# ============================================================================
+#  urutonde.waa -- gukora ku ntonde (lists / arrays)
+# ============================================================================
+#  injiza "urutonde.waa";
+
+injiza "imibare.waa";
+
+# Igiteranyo cy'ibiri ku rutonde -- sum.
+umurimo igiteranyo(a) {
+  reka s = 0;
+  reka i = 0;
+  mugihe (i < ubunini(a)) { s = s + a[i]; i = i + 1; }
+  tanga s;
+}
+
+# Agaciro gato ku rutonde -- minimum.
+umurimo ntoya_muri(a) {
+  niba (ubunini(a) == 0) { tanga 0; }
+  reka m = a[0];
+  reka i = 1;
+  mugihe (i < ubunini(a)) { m = ntoya(m, a[i]); i = i + 1; }
+  tanga m;
+}
+
+# Agaciro kanini ku rutonde -- maximum.
+umurimo nini_muri(a) {
+  niba (ubunini(a) == 0) { tanga 0; }
+  reka m = a[0];
+  reka i = 1;
+  mugihe (i < ubunini(a)) { m = nini(m, a[i]); i = i + 1; }
+  tanga m;
+}
+
+# Aho agaciro kari ku rutonde -- index of, or -1.
+umurimo aho_kari(a, x) {
+  reka i = 0;
+  mugihe (i < ubunini(a)) {
+    niba (a[i] == x) { tanga i; }
+    i = i + 1;
+  }
+  tanga 0 - 1;
+}
+
+# Rurimo -- true when the list contains x.
+umurimo rurimo(a, x) { tanga aho_kari(a, x) >= 0; }
+
+# Kopi y'urutonde -- a copy.
+umurimo gukoporora(a) {
+  reka n = ubunini(a);
+  reka b = urutonde(n);
+  reka i = 0;
+  mugihe (i < n) { b[i] = a[i]; i = i + 1; }
+  tanga b;
+}
+
+# Guhindura icyerekezo -- reversed copy.
+umurimo guhindura_icyerekezo(a) {
+  reka n = ubunini(a);
+  reka b = urutonde(n);
+  reka i = 0;
+  mugihe (i < n) { b[i] = a[n - 1 - i]; i = i + 1; }
+  tanga b;
+}
+
+# Gushyira ku murongo -- sorted copy (insertion sort; the lists Wandaa
+# programs handle today are small, and this keeps the code readable).
+umurimo gushyira_ku_murongo(a) {
+  reka b = gukoporora(a);
+  reka n = ubunini(b);
+  reka i = 1;
+  mugihe (i < n) {
+    reka agaciro = b[i];
+    reka j = i;
+    reka birangiye = 0;
+    mugihe (birangiye == 0) {
+      niba (j == 0) { birangiye = 1; }
+      ubundi niba (b[j - 1] > agaciro) {
+        b[j] = b[j - 1];
+        j = j - 1;
+      }
+      ubundi { birangiye = 1; }
+    }
+    b[j] = agaciro;
+    i = i + 1;
+  }
+  tanga b;
+}

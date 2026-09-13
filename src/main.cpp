@@ -1,10 +1,13 @@
 #include "../include/lexer.hpp"
 #include "../include/parser.hpp"
 #include "../include/codegen.hpp"
+#include "../include/modules.hpp"
 #include <fstream>
 #include <sstream>
 #include <iostream>
 #include <string>
+#include <vector>
+#include <cstdlib>
 
 // wandaac -- the Wandaa compiler.
 //
@@ -17,10 +20,6 @@ int main(int argc, char** argv){
   }
   const std::string srcPath = argv[1];
 
-  std::ifstream f(srcPath, std::ios::binary);
-  if(!f){ std::cerr << "ntidushoboye gufungura: " << srcPath << "\n"; return 1; }
-  std::stringstream ss; ss << f.rdbuf();
-
   std::string outPath;
   if(argc > 2) outPath = argv[2];
   else {
@@ -31,9 +30,14 @@ int main(int argc, char** argv){
     outPath = (hasExt ? srcPath.substr(0, dot) : srcPath) + ".exe";
   }
 
+  // Where `injiza` looks for modules that are not beside the importing file.
+  // WANDAA_PATH first, then the standard library shipped next to the compiler.
+  std::vector<std::string> searchPaths;
+  if(const char* env = std::getenv("WANDAA_PATH")) searchPaths.push_back(env);
+  searchPaths.push_back("lib");
+
   try {
-    const auto toks = tokenize(ss.str());
-    const auto ast  = parse(toks);
+    const auto ast = parseProgramWithImports(srcPath, searchPaths);
     generateExe(ast, outPath);
     std::cout << "Byubatswe: " << outPath << "\n";
   } catch(const std::exception& e){

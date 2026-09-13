@@ -1,0 +1,48 @@
+injiza "imibare.waa";
+injiza "amagambo.waa";
+injiza "urutonde.waa";
+injiza "sisitemu.waa";
+
+andika("== imibare ==");
+andika(nyacyo(-42));
+andika(ntoya(3, 9));
+andika(nini(3, 9));
+andika(hagati(15, 0, 10));
+andika(ingufu(2, 10));
+andika(igisigara(17, 5));
+andika(mugabane(48, 18));
+andika(gusangira(4, 6));
+andika(umuzi(144));
+andika(umuzi(145));
+
+andika("== amagambo ==");
+reka s = "Mwiriwe Rwanda" + "";
+andika(aho_iri(s, "Rwanda"));
+andika(aho_iri(s, "Burundi"));
+andika(arimo(s, "wiri"));
+andika(gutangirana(s, "Mwiriwe"));
+andika(kurangirana(s, "Rwanda"));
+andika(hejuru(s));
+andika(hasi(s));
+andika(gusubiramo("ab", 3));
+andika(gukuraho_umwanya("   hagati   "));
+andika(gusimbura(s, "Rwanda", "Afurika"));
+andika(inyuguti_ijambo(87));
+
+andika("== urutonde ==");
+reka a = [5, 3, 9, 1, 7];
+andika(igiteranyo(a));
+andika(ntoya_muri(a));
+andika(nini_muri(a));
+andika(aho_kari(a, 9));
+andika(rurimo(a, 4));
+reka b = guhindura_icyerekezo(a);
+andika(b[0]);
+reka c = gushyira_ku_murongo(a);
+andika(c[0]);
+andika(c[4]);
+andika(igiteranyo(c));
+
+andika("== sisitemu ==");
+reka pid = nimero_ya_process();
+niba (pid > 0) { andika("process ihari"); } ubundi { andika("nta process"); }

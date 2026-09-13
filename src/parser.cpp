@@ -36,6 +36,10 @@ struct Parser {
     else if(check(Tok::UMURIMO)) __n = funcDecl();
     else if(check(Tok::TANGA)) __n = returnStmt();
     else if(check(Tok::ANDIKA)) __n = printStmt();
+    else if(check(Tok::HANZE)) __n = externDecl();
+    else if(check(Tok::INJIZA)) __n = importDecl();
+    else if(check(Tok::HAGARIKA)){ advance(); expect(Tok::SEMI,"';'"); __n = mk(NT::Break); }
+    else if(check(Tok::KOMEZA)){ advance(); expect(Tok::SEMI,"';'"); __n = mk(NT::Continue); }
     else if(check(Tok::LBRACE)) __n = block();
     else {
       auto e = expression();
@@ -44,6 +48,41 @@ struct Parser {
     }
     if(__n) __n->line = __ln;
     return __n;
+  }
+
+  // hanze "kernel32.dll" Sleep(ms);
+  //
+  // Declares a function living in a Windows DLL. The compiler adds it to the
+  // executable's import table and calls it through the IAT, so a Wandaa program
+  // can reach any C ABI entry point the system offers -- sockets, SQLite, a
+  // machine-learning runtime -- without the compiler knowing anything about it.
+  NodePtr externDecl(){
+    advance();
+    auto n = mk(NT::ExternDecl);
+    n->sval2 = expect(Tok::STR, "izina rya DLL nka \"kernel32.dll\"").text;
+    n->sval  = expect(Tok::IDENT, "izina ry'umurimo wo hanze").text;
+    expect(Tok::LPAREN, "'('");
+    if(!check(Tok::RPAREN)){
+      n->params.push_back(expect(Tok::IDENT,"parameter").text);
+      while(check(Tok::COMMA)){ advance(); n->params.push_back(expect(Tok::IDENT,"parameter").text); }
+    }
+    expect(Tok::RPAREN, "')'");
+    expect(Tok::SEMI, "';'");
+    return n;
+  }
+
+  // injiza "ibimenyetso/urutonde.waa";
+  //
+  // Pulls another Wandaa source file into this one. Parsed here rather than
+  // textually so each file keeps its own token stream; the resolved statements
+  // are spliced into the enclosing program.
+  NodePtr importDecl(){
+    advance();
+    auto n = mk(NT::Block);
+    n->sval = expect(Tok::STR, "inzira ya dosiye").text;
+    expect(Tok::SEMI, "';'");
+    n->bval = true;                 // marks this Block as an unresolved import
+    return n;
   }
 
   NodePtr varDecl(){
@@ -116,7 +155,7 @@ struct Parser {
   NodePtr expression(){ return assignment(); }
 
   NodePtr assignment(){
-    auto left = equality();
+    auto left = logicalOr();
     if(check(Tok::EQ)){
       advance();
       auto val = assignment();
@@ -133,6 +172,28 @@ struct Parser {
       throw std::runtime_error("aho ushyira agaciro ntibyemewe");
     }
     return left;
+  }
+
+  // `cyangwa` / `||` -- lower precedence than `na`, as everywhere else.
+  NodePtr logicalOr(){
+    auto n = logicalAnd();
+    while(check(Tok::CYANGWA) || check(Tok::OROR)){
+      advance();
+      auto r = logicalAnd();
+      auto b = mk(NT::Bin); b->sval = "||"; b->kids = {n, r}; n = b;
+    }
+    return n;
+  }
+
+  // `na` / `&&`
+  NodePtr logicalAnd(){
+    auto n = equality();
+    while(check(Tok::NA) || check(Tok::ANDAND)){
+      advance();
+      auto r = equality();
+      auto b = mk(NT::Bin); b->sval = "&&"; b->kids = {n, r}; n = b;
+    }
+    return n;
   }
 
   NodePtr equality(){
@@ -176,6 +237,10 @@ struct Parser {
   }
 
   NodePtr unary(){
+    if(check(Tok::SI) || check(Tok::BANG)){
+      advance(); auto r = unary();
+      auto n = mk(NT::Un); n->sval = "!"; n->kids.push_back(r); return n;
+    }
     if(check(Tok::MINUS)){
       advance(); auto r=unary();
       auto n=mk(NT::Un); n->sval="-"; n->kids.push_back(r); return n;

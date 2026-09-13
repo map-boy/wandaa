@@ -6,7 +6,10 @@
 static const std::unordered_map<std::string, Tok> KW = {
   {"reka",Tok::REKA},{"niba",Tok::NIBA},{"ubundi",Tok::UBUNDI},
   {"mugihe",Tok::MUGIHE},{"umurimo",Tok::UMURIMO},{"tanga",Tok::TANGA},
-  {"andika",Tok::ANDIKA},{"nibyo",Tok::NIBYO},{"oya",Tok::OYA}
+  {"andika",Tok::ANDIKA},{"nibyo",Tok::NIBYO},{"oya",Tok::OYA},
+  {"hanze",Tok::HANZE},{"injiza",Tok::INJIZA},
+  {"na",Tok::NA},{"cyangwa",Tok::CYANGWA},{"si",Tok::SI},
+  {"hagarika",Tok::HAGARIKA},{"komeza",Tok::KOMEZA}
 };
 
 std::vector<Token> tokenize(const std::string& s){
@@ -35,9 +38,30 @@ std::vector<Token> tokenize(const std::string& s){
       out.push_back({tt,word,0,line}); continue;
     }
     if(c=='"'){
-      i++; size_t start=i;
-      while(i<n && s[i]!='"') i++;
-      std::string val=s.substr(start,i-start);
+      // String literal with C-style escapes. Without these a program cannot
+      // contain a quote, a backslash, a tab or a newline.
+      i++;
+      std::string val;
+      while(i<n && s[i]!='"'){
+        if(s[i]=='\\' && i+1<n){
+          const char e = s[i+1];
+          switch(e){
+            case 'n':  val += '\n';  i+=2; break;
+            case 't':  val += '\t';  i+=2; break;
+            case 'r':  val += '\r';  i+=2; break;
+            case '0':  val += '\0';  i+=2; break;
+            case '\\': val += '\\'; i+=2; break;
+            case '"':  val += '"';   i+=2; break;
+            default:
+              throw std::runtime_error("ikimenyetso cyo guhunga kitazwi '\\" +
+                                       std::string(1,e) + "' ku murongo " + std::to_string(line));
+          }
+          continue;
+        }
+        if(s[i]=='\n') line++;
+        val += s[i++];
+      }
+      if(i>=n) throw std::runtime_error("ijambo ritarangiye ku murongo "+std::to_string(line));
       i++; out.push_back({Tok::STR,val,0,line}); continue;
     }
     switch(c){
@@ -59,7 +83,15 @@ std::vector<Token> tokenize(const std::string& s){
         break;
       case '!':
         i++; if(peek()=='='){ out.push_back({Tok::NEQ,"!=",0,line}); i++; }
-        else throw std::runtime_error("ikimenyetso kitazwi: !");
+        else out.push_back({Tok::BANG,"!",0,line});
+        break;
+      case '&':
+        i++; if(peek()=='&'){ out.push_back({Tok::ANDAND,"&&",0,line}); i++; }
+        else throw std::runtime_error("ikimenyetso kitazwi '&' ku murongo "+std::to_string(line));
+        break;
+      case '|':
+        i++; if(peek()=='|'){ out.push_back({Tok::OROR,"||",0,line}); i++; }
+        else throw std::runtime_error("ikimenyetso kitazwi '|' ku murongo "+std::to_string(line));
         break;
       case '<':
         i++; if(peek()=='='){ out.push_back({Tok::LE,"<=",0,line}); i++; }

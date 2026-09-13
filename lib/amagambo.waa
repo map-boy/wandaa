@@ -1,0 +1,157 @@
+# ============================================================================
+#  amagambo.waa -- gukora ku magambo (string handling)
+# ============================================================================
+#  injiza "amagambo.waa";
+#
+#  Yubakiye kuri inyuguti(), igice(), uburebure() -- ibikorwa fatizo bya Wandaa.
+
+injiza "imibare.waa";
+
+# Aho ijambo rito riri mu ijambo rinini -- index of `gito` in `s`, or -1.
+umurimo aho_iri(s, gito) {
+  reka n = uburebure(s);
+  reka m = uburebure(gito);
+  niba (m == 0) { tanga 0; }
+  niba (m > n) { tanga 0 - 1; }
+  reka i = 0;
+  mugihe (i <= n - m) {
+    reka j = 0;
+    reka bihuye = 1;
+    mugihe (j < m) {
+      niba (inyuguti(s, i + j) != inyuguti(gito, j)) {
+        bihuye = 0;
+        j = m;
+      } ubundi {
+        j = j + 1;
+      }
+    }
+    niba (bihuye == 1) { tanga i; }
+    i = i + 1;
+  }
+  tanga 0 - 1;
+}
+
+# Irimo -- true when `s` contains `gito`.
+umurimo arimo(s, gito) {
+  tanga aho_iri(s, gito) >= 0;
+}
+
+# Gutangirana -- true when `s` starts with `intangiriro`.
+umurimo gutangirana(s, intangiriro) {
+  reka m = uburebure(intangiriro);
+  niba (m > uburebure(s)) { tanga oya; }
+  tanga igice(s, 0, m) == intangiriro;
+}
+
+# Kurangirana -- true when `s` ends with `impera`.
+umurimo kurangirana(s, impera) {
+  reka m = uburebure(impera);
+  reka n = uburebure(s);
+  niba (m > n) { tanga oya; }
+  tanga igice(s, n - m, m) == impera;
+}
+
+# Inyuguti nkuru -- ASCII upper case.
+umurimo hejuru(s) {
+  reka igisubizo = "";
+  reka i = 0;
+  mugihe (i < uburebure(s)) {
+    reka c = inyuguti(s, i);
+    niba (c >= 97) {
+      niba (c <= 122) { c = c - 32; }
+    }
+    igisubizo = igisubizo + inyuguti_ijambo(c);
+    i = i + 1;
+  }
+  tanga igisubizo;
+}
+
+# Inyuguti nto -- ASCII lower case.
+umurimo hasi(s) {
+  reka igisubizo = "";
+  reka i = 0;
+  mugihe (i < uburebure(s)) {
+    reka c = inyuguti(s, i);
+    niba (c >= 65) {
+      niba (c <= 90) { c = c + 32; }
+    }
+    igisubizo = igisubizo + inyuguti_ijambo(c);
+    i = i + 1;
+  }
+  tanga igisubizo;
+}
+
+# Guhindura kode ya ASCII mu ijambo ry'inyuguti imwe -- one-character string.
+# Yubakiye ku ijambo rifite inyuguti zose za ASCII zikoreshwa.
+umurimo inyuguti_ijambo(c) {
+  reka zose = " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~";
+  niba (c < 32) { tanga ""; }
+  niba (c > 126) { tanga ""; }
+  tanga igice(zose, c - 32, 1);
+}
+
+# Gusubiramo ijambo inshuro n -- repeat.
+umurimo gusubiramo(s, n) {
+  reka igisubizo = "";
+  reka i = 0;
+  mugihe (i < n) {
+    igisubizo = igisubizo + s;
+    i = i + 1;
+  }
+  tanga igisubizo;
+}
+
+# Ni umwanya -- space, tab, newline or carriage return.
+umurimo ni_umwanya(c) {
+  niba (c == 32) { tanga 1; }
+  niba (c == 9)  { tanga 1; }
+  niba (c == 10) { tanga 1; }
+  niba (c == 13) { tanga 1; }
+  tanga 0;
+}
+
+# Gukuraho umwanya ku mpera zombi -- trim.
+#
+# Wandaa nta `break` ifite, ni yo mpamvu dukoresha ikimenyetso `birangiye`.
+umurimo gukuraho_umwanya(s) {
+  reka n = uburebure(s);
+  reka a = 0;
+  reka birangiye = 0;
+  mugihe (birangiye == 0) {
+    niba (a >= n) { birangiye = 1; }
+    ubundi niba (ni_umwanya(inyuguti(s, a)) == 1) { a = a + 1; }
+    ubundi { birangiye = 1; }
+  }
+  reka b = n;
+  birangiye = 0;
+  mugihe (birangiye == 0) {
+    niba (b <= a) { birangiye = 1; }
+    ubundi niba (ni_umwanya(inyuguti(s, b - 1)) == 1) { b = b - 1; }
+    ubundi { birangiye = 1; }
+  }
+  tanga igice(s, a, b - a);
+}
+
+# Gusimbura ijambo rito ryose -- replace every occurrence.
+umurimo gusimbura(s, gito, gishya) {
+  niba (uburebure(gito) == 0) { tanga s; }
+  reka igisubizo = "";
+  reka i = 0;
+  reka n = uburebure(s);
+  reka m = uburebure(gito);
+  mugihe (i < n) {
+    niba (i + m <= n) {
+      niba (igice(s, i, m) == gito) {
+        igisubizo = igisubizo + gishya;
+        i = i + m;
+      } ubundi {
+        igisubizo = igisubizo + igice(s, i, 1);
+        i = i + 1;
+      }
+    } ubundi {
+      igisubizo = igisubizo + igice(s, i, 1);
+      i = i + 1;
+    }
+  }
+  tanga igisubizo;
+}

@@ -1,0 +1,81 @@
+# ============================================================================
+#  imibare.waa -- imibare n'imibarwa (numbers and arithmetic)
+# ============================================================================
+#  injiza "imibare.waa";
+
+# Agaciro nyacyo -- absolute value.
+umurimo nyacyo(n) {
+  niba (n < 0) { tanga 0 - n; }
+  tanga n;
+}
+
+# Agaciro gato -- the smaller of two numbers.
+umurimo ntoya(a, b) {
+  niba (a < b) { tanga a; }
+  tanga b;
+}
+
+# Agaciro kanini -- the larger of two numbers.
+umurimo nini(a, b) {
+  niba (a > b) { tanga a; }
+  tanga b;
+}
+
+# Kugarura agaciro hagati ya ntoya na nini -- clamp.
+umurimo hagati(n, ntoyaa, ninii) {
+  niba (n < ntoyaa) { tanga ntoyaa; }
+  niba (n > ninii) { tanga ninii; }
+  tanga n;
+}
+
+# a ku ngufu za b -- a raised to the power b (b >= 0).
+umurimo ingufu(a, b) {
+  reka igisubizo = 1;
+  reka i = 0;
+  mugihe (i < b) {
+    igisubizo = igisubizo * a;
+    i = i + 1;
+  }
+  tanga igisubizo;
+}
+
+# Igisigara -- remainder of a divided by b.
+umurimo igisigara(a, b) {
+  tanga a - (a / b) * b;
+}
+
+# Ni umubare utagabanywa na 2 -- true when n is even.
+umurimo ni_gicuri(n) {
+  tanga igisigara(n, 2) == 0;
+}
+
+# Umugabane munini usangiwe -- greatest common divisor.
+umurimo mugabane(a, b) {
+  a = nyacyo(a);
+  b = nyacyo(b);
+  mugihe (b != 0) {
+    reka t = igisigara(a, b);
+    a = b;
+    b = t;
+  }
+  tanga a;
+}
+
+# Umubare uto usangiwe -- least common multiple.
+umurimo gusangira(a, b) {
+  niba (a == 0) { tanga 0; }
+  niba (b == 0) { tanga 0; }
+  tanga nyacyo(a * b) / mugabane(a, b);
+}
+
+# Umuzi wa kabiri -- integer square root (floor).
+umurimo umuzi(n) {
+  niba (n < 1) { tanga 0; }
+  reka x = n;
+  reka y = (x + 1) / 2;
+  mugihe (y < x) {
+    x = y;
+    y = (x + n / x) / 2;
+  }
+  tanga x;
+}

@@ -17,7 +17,7 @@ jobs:
         run: |
           # -static so wandaac.exe carries no libstdc++/libgcc DLL dependency and
           # genuinely runs with no toolchain on PATH.
-          g++ -std=c++17 -O2 -Wall -Wextra -static -o wandaac.exe src/lexer.cpp src/parser.cpp src/codegen.cpp src/main.cpp
+          g++ -std=c++17 -O2 -Wall -Wextra -static -o wandaac.exe src/lexer.cpp src/parser.cpp src/modules.cpp src/codegen.cpp src/main.cpp
           if ($LASTEXITCODE -ne 0) { exit 1 }
 
       - name: Confirm no assembler or linker is used at compile time

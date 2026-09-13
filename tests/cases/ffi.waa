@@ -1,0 +1,13 @@
+# FFI: call Windows DLLs directly. Only deterministic results are printed --
+# process ids and tick counts vary per run, so they are only range-checked.
+hanze "kernel32.dll" GetCurrentProcessId();
+hanze "kernel32.dll" GetTickCount();
+hanze "user32.dll" CharUpperA(s);
+
+andika(GetCurrentProcessId() > 0);
+andika(GetTickCount() >= 0);
+
+# A DLL that returns char* needs ijambo() to become a Wandaa string, since a
+# foreign string carries no length header.
+andika(ijambo(CharUpperA("mwiriwe" + "")));
+andika(uburebure(ijambo(CharUpperA("rwanda" + ""))));

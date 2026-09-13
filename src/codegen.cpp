@@ -107,6 +107,7 @@ VType evalType(const NodePtr& n, const std::unordered_map<std::string,VType>& ty
     }
     case NT::Un: return VType::Int;
     case NT::Bin:
+      if(n->sval=="&&" || n->sval=="||") return VType::Int;
       if(n->sval=="+" && evalType(n->kids[0],types)==VType::Str && evalType(n->kids[1],types)==VType::Str)
         return VType::Str;
       return VType::Int;
@@ -187,6 +188,11 @@ struct Codegen {
 
   size_t blobBase = 0, codeBase = 0;
   std::map<std::string,int> importId;     // "dll!func" -> PEWriter import id
+
+  // Functions declared with `hanze "some.dll" Name(...)`. These are called
+  // through the import address table rather than by rel32, which is what lets a
+  // Wandaa program reach any C ABI entry point the system exposes.
+  std::map<std::string,std::string> externs;   // function name -> DLL
   std::vector<std::string> definedFns;    // for a better error than "undefined label"
 
   std::string newLabel(const std::string& p){ return p + "_" + std::to_string(labelCounter++); }
@@ -216,6 +222,10 @@ struct Codegen {
   // stackSlots counts the 8-byte temporaries currently below the frame, so
   // every call site can insert 8 bytes of padding when the parity is wrong.
   int stackSlots = 0;
+
+  // Innermost enclosing loop, for `hagarika` (break) and `komeza` (continue).
+  struct LoopLabels { std::string brk, cont; };
+  std::vector<LoopLabels> loops;
 
   void pushTmp(R r){ a.push(r); ++stackSlots; }
   void popTmp(R r) { a.pop(r);  --stackSlots; }
@@ -326,12 +336,45 @@ struct Codegen {
       case NT::Index:       genIndex(n); break;
       case NT::IndexAssign: genIndexAssign(n); break;
       case NT::Var:  a.mov_load_rbp(X64Asm::RAX, -curOffset(n->sval)); break;
-      case NT::Un:   genExpr(n->kids[0]); a.neg(X64Asm::RAX); break;
+      case NT::Un:
+        genExpr(n->kids[0]);
+        if(n->sval=="!"){                  // si / ! -- logical negation to 0/1
+          a.test(X64Asm::RAX, X64Asm::RAX);
+          a.setcc("e");
+          a.movzx_rax_al();
+        } else {
+          a.neg(X64Asm::RAX);
+        }
+        break;
       case NT::Assign:
         genExpr(n->kids[0]);
         a.mov_store_rbp(-curOffset(n->sval), X64Asm::RAX);
         break;
       case NT::Bin: {
+        // Short-circuit operators: the right side must not be evaluated when
+        // the left already decides the result.
+        if(n->sval=="&&" || n->sval=="||"){
+          const bool isAnd = n->sval=="&&";
+          const std::string Lshort = newLabel(isAnd ? "Land_false" : "Lor_true");
+          const std::string Lend   = newLabel("Lbool_end");
+
+          genExpr(n->kids[0]);
+          a.test(X64Asm::RAX, X64Asm::RAX);
+          if(isAnd) a.jz(Lshort); else a.jnz(Lshort);
+
+          genExpr(n->kids[1]);
+          a.test(X64Asm::RAX, X64Asm::RAX);
+          if(isAnd) a.jz(Lshort); else a.jnz(Lshort);
+
+          // Normalise to 0/1 rather than passing the operand value through.
+          a.mov_imm(X64Asm::RAX, isAnd ? 1 : 0);
+          a.jmp(Lend);
+          a.defineLabel(Lshort);
+          a.mov_imm(X64Asm::RAX, isAnd ? 0 : 1);
+          a.defineLabel(Lend);
+          break;
+        }
+
         const bool bothStr = inferType(n->kids[0])==VType::Str && inferType(n->kids[1])==VType::Str;
 
         if(n->sval=="+" && bothStr){
@@ -385,12 +428,28 @@ struct Codegen {
       {"uburebure", "wandaa_str_len"},
       {"ubunini",   "wandaa_str_len"},
       {"soma",      "wandaa_read_file"},
-      {"andikamo",  "wandaa_write_file"}
+      {"andikamo",  "wandaa_write_file"},
+      // Convert a raw NUL-terminated pointer returned by a `hanze` function
+      // into a Wandaa string. Needed because foreign strings carry no length
+      // header of their own.
+      {"ijambo",    "wandaa_str_from_c"},
+      {"inyuguti",  "wandaa_str_at"},      // byte at index, -1 if out of range
+      {"igice",     "wandaa_substr"},      // substring(start, len), clamped
+      {"mu_ijambo", "wandaa_int_to_str"},  // number -> string
+      {"mu_mubare", "wandaa_str_to_int"},  // string -> number
+      {"urutonde",  "wandaa_array_new"}    // zero-filled array of n elements
     };
     std::string target = n->sval;
     auto bit = builtins.find(target);
     if(bit != builtins.end()) target = bit->second;
 
+    const auto ext = externs.find(target);
+    if(ext != externs.end()){
+      if(bit != builtins.end())
+        throw std::runtime_error("izina '" + n->sval + "' ryamaze gufatwa na Wandaa");
+      emitCall(target, n->kids, /*isImport=*/true);
+      return;
+    }
     emitCall(target, n->kids, /*isImport=*/false);
   }
 
@@ -434,11 +493,21 @@ struct Codegen {
         genExpr(n->kids[0]);
         a.test(X64Asm::RAX, X64Asm::RAX);
         a.jz(Lend);
+        loops.push_back({Lend, Lstart});
         genStmt(n->kids[1]);
+        loops.pop_back();
         a.jmp(Lstart);
         a.defineLabel(Lend);
         break;
       }
+      case NT::Break:
+        if(loops.empty()) throw std::runtime_error("'hagarika' iri hanze ya 'mugihe'");
+        a.jmp(loops.back().brk);
+        break;
+      case NT::Continue:
+        if(loops.empty()) throw std::runtime_error("'komeza' iri hanze ya 'mugihe'");
+        a.jmp(loops.back().cont);
+        break;
       case NT::Block: for(auto& k : n->kids) genStmt(k); break;
       case NT::Return:
         if(!n->kids.empty()) genExpr(n->kids[0]);
@@ -446,6 +515,7 @@ struct Codegen {
         a.jmp(epilogue);
         break;
       case NT::FuncDecl: break;
+      case NT::ExternDecl: break;   // declaration only, emits nothing
       default: genExpr(n);
     }
   }
@@ -525,10 +595,23 @@ struct Codegen {
     g_fnReturnTypes.clear();
     g_arrElemTypes.clear();
     g_fnReturnTypes["soma"] = VType::Str;
+    g_fnReturnTypes["ijambo"] = VType::Str;
+    g_fnReturnTypes["igice"] = VType::Str;
+    g_fnReturnTypes["mu_ijambo"] = VType::Str;
 
     std::vector<NodePtr> funcs, rest;
     for(auto& k : program->kids){
       if(k->type==NT::FuncDecl) funcs.push_back(k);
+      else if(k->type==NT::ExternDecl){
+        // Declaration only -- it emits no code, it just tells the linker-less
+        // backend to put this function in the import table.
+        auto prev = externs.find(k->sval);
+        if(prev != externs.end() && prev->second != k->sval2)
+          throw std::runtime_error("umurimo wo hanze '" + k->sval +
+                                   "' watangajwe kabiri muri DLL zitandukanye: " +
+                                   prev->second + " na " + k->sval2);
+        externs[k->sval] = k->sval2;
+      }
       else rest.push_back(k);
     }
     auto restBlock = mk(NT::Block);
@@ -567,6 +650,11 @@ struct Codegen {
     for(const char* fn : {"GetProcessHeap", "HeapAlloc"}){
       const std::string key = std::string("kernel32.dll!") + fn;
       if(!importId.count(key)) importId[key] = pe.addImport("kernel32.dll", fn);
+    }
+    // Anything the program declared with `hanze`.
+    for(const auto& ex : externs){
+      const std::string key = ex.second + "!" + ex.first;
+      if(!importId.count(key)) importId[key] = pe.addImport(ex.second, ex.first);
     }
 
     // --- 2. section layout ------------------------------------------------

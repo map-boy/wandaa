@@ -1,0 +1,37 @@
+# ============================================================================
+#  sisitemu.waa -- guhamagara sisitemu ya Windows (system calls via FFI)
+# ============================================================================
+#  injiza "sisitemu.waa";
+#
+#  Iyi module yerekana uko `hanze` ikoreshwa: buri murimo ni umurimo wa
+#  Windows DLL uhamagarwa nta glue code.
+
+hanze "kernel32.dll" Sleep(ms);
+hanze "kernel32.dll" GetTickCount();
+hanze "kernel32.dll" GetCurrentProcessId();
+hanze "kernel32.dll" GetCommandLineA();
+hanze "kernel32.dll" GetLastError();
+hanze "kernel32.dll" CreateDirectoryA(izina, sec);
+hanze "kernel32.dll" DeleteFileA(izina);
+hanze "kernel32.dll" GetEnvironmentVariableA(izina, buf, ingano);
+
+# Gutegereza -- sleep for `ms` milliseconds.
+umurimo gutegereza(ms) { tanga Sleep(ms); }
+
+# Igihe -- milliseconds since the system started.
+umurimo igihe() { tanga GetTickCount(); }
+
+# Nimero ya process -- the current process id.
+umurimo nimero_ya_process() { tanga GetCurrentProcessId(); }
+
+# Amabwiriza yatanzwe -- the raw command line.
+umurimo amabwiriza() { tanga ijambo(GetCommandLineA()); }
+
+# Gukora ububiko -- create a directory. Returns non-zero on success.
+umurimo gukora_ububiko(izina) { tanga CreateDirectoryA(izina, 0); }
+
+# Gusiba dosiye -- delete a file. Returns non-zero on success.
+umurimo gusiba_dosiye(izina) { tanga DeleteFileA(izina); }
+
+# Ikosa rya nyuma -- the last Windows error code.
+umurimo ikosa_rya_nyuma() { tanga GetLastError(); }

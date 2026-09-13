@@ -1,0 +1,12 @@
+# Imports are resolved once even when reached by several paths: urutonde.waa
+# and amagambo.waa both import imibare.waa, and its functions must not be
+# emitted twice.
+injiza "imibare.waa";
+injiza "urutonde.waa";
+injiza "amagambo.waa";
+injiza "imibare.waa";
+
+andika(nini(ntoya(10, 4), 2));
+andika(igiteranyo([1, 2, 3, 4]));
+andika(hejuru("rwanda" + ""));
+andika(mugabane(84, 36));

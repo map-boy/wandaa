@@ -6,7 +6,7 @@
 enum class NT {
   Num, Str, Bool, Var, Bin, Un, Assign, VarDecl, Call,
   Block, If, While, FuncDecl, Return, Print, ExprStmt, Program,
-  ArrayLit, Index, IndexAssign
+  ArrayLit, Index, IndexAssign, ExternDecl, Break, Continue
 };
 
 struct Node;
@@ -15,6 +15,8 @@ using NodePtr = std::shared_ptr<Node>;
 struct Node {
   NT type;
   std::string sval;
+  // Secondary string payload. For ExternDecl this is the DLL name.
+  std::string sval2;
   double nval = 0;
   bool bval = false;
   std::vector<NodePtr> kids;
