@@ -204,19 +204,73 @@ struct Codegen {
     return lbl;
   }
 
-  // ---- calls -------------------------------------------------------------
-  // Both helpers reproduce the old text backend exactly: reserve the 32-byte
-  // shadow space Win64 requires, call, then release it (caller-cleaned).
+  // ---- stack discipline --------------------------------------------------
+  //
+  // Win64 requires RSP to be 16-byte aligned at every CALL. After the prologue
+  // RSP is aligned (push rbp makes it so, and frameSize is rounded to 16), but
+  // expression evaluation pushes temporaries, so mid-expression it can sit at
+  // an odd multiple of 8. The old backend ignored this: `f(a, g(b))` called g
+  // with RSP % 16 == 8. Our own runtime never noticed -- it uses no SSE -- but
+  // any DLL that does (and FFI makes those reachable) would fault on a movaps.
+  //
+  // stackSlots counts the 8-byte temporaries currently below the frame, so
+  // every call site can insert 8 bytes of padding when the parity is wrong.
+  int stackSlots = 0;
 
+  void pushTmp(R r){ a.push(r); ++stackSlots; }
+  void popTmp(R r) { a.pop(r);  --stackSlots; }
+
+  int callPad() const { return (stackSlots % 2) ? 8 : 0; }
+
+  // Call with arguments already in registers. Reserves the 32-byte shadow
+  // space Win64 requires (caller-cleaned), plus alignment padding.
   void callRuntime(const std::string& rtLabel){
-    a.sub_imm(X64Asm::RSP, 32);
+    const int pad = callPad();
+    a.sub_imm(X64Asm::RSP, 32 + pad);
     a.call_label(rtLabel);
-    a.add_imm(X64Asm::RSP, 32);
+    a.add_imm(X64Asm::RSP, 32 + pad);
   }
   void callImport(const std::string& func){
-    a.sub_imm(X64Asm::RSP, 32);
+    const int pad = callPad();
+    a.sub_imm(X64Asm::RSP, 32 + pad);
     a.call_mem_rip("__imp_" + func);
-    a.add_imm(X64Asm::RSP, 32);
+    a.add_imm(X64Asm::RSP, 32 + pad);
+  }
+
+  // Evaluate `args` and call `target`, supporting any number of arguments.
+  //
+  // Win64 gives argument i its home at [rsp + 8*i] in the outgoing area -- the
+  // 32-byte shadow space IS the home for the first four. So the whole thing is
+  // one reservation: store every argument at [rsp + 8*i] as it is evaluated,
+  // then load the first four into RCX/RDX/R8/R9. That preserves left-to-right
+  // evaluation order (which matters when arguments have side effects), needs no
+  // shuffling for arguments five and up, and keeps RSP aligned throughout
+  // because a single aligned amount is reserved before any of it runs.
+  void emitCall(const std::string& target, const std::vector<NodePtr>& args, bool isImport){
+    const int n = (int)args.size();
+    const int homeSlots = (n > 4 ? n : 4);            // shadow space is always 4
+    const int pad = ((homeSlots + stackSlots) % 2) ? 8 : 0;
+    const int reserve = homeSlots * 8 + pad;
+
+    a.sub_imm(X64Asm::RSP, reserve);
+
+    // RSP is 16-byte aligned again inside this region, so nested calls in the
+    // argument expressions start from a clean parity.
+    const int savedSlots = stackSlots;
+    stackSlots = 0;
+
+    for(int i = 0; i < n; ++i){
+      genExpr(args[i]);
+      a.mov_store_base(X64Asm::RSP, i * 8, X64Asm::RAX);
+    }
+    for(int i = 0; i < n && i < 4; ++i)
+      a.mov_load_base(ARG_REGS[i], X64Asm::RSP, i * 8);
+
+    if(isImport) a.call_mem_rip("__imp_" + target);
+    else         a.call_label(target);
+
+    stackSlots = savedSlots;
+    a.add_imm(X64Asm::RSP, reserve);
   }
 
   // ---- expressions -------------------------------------------------------
@@ -243,23 +297,23 @@ struct Codegen {
 
   void genIndex(const NodePtr& n){
     genExpr(n->kids[0]);
-    a.push(X64Asm::RAX);
+    pushTmp(X64Asm::RAX);
     genExpr(n->kids[1]);
     a.mov_reg(X64Asm::RBX, X64Asm::RAX);
-    a.pop(X64Asm::RAX);
+    popTmp(X64Asm::RAX);
     a.mov_load_sib(X64Asm::RAX, X64Asm::RAX, X64Asm::RBX);
   }
 
   void genIndexAssign(const NodePtr& n){
     genExpr(n->kids[0]);
-    a.push(X64Asm::RAX);
+    pushTmp(X64Asm::RAX);
     genExpr(n->kids[1]);
     a.mov_reg(X64Asm::RBX, X64Asm::RAX);
-    a.pop(X64Asm::RAX);
+    popTmp(X64Asm::RAX);
     a.lea_sib(X64Asm::RAX, X64Asm::RAX, X64Asm::RBX);
-    a.push(X64Asm::RAX);
+    pushTmp(X64Asm::RAX);
     genExpr(n->kids[2]);
-    a.pop(X64Asm::RCX);
+    popTmp(X64Asm::RCX);
     a.mov_store_base(X64Asm::RCX, 0, X64Asm::RAX);
   }
 
@@ -282,29 +336,29 @@ struct Codegen {
 
         if(n->sval=="+" && bothStr){
           genExpr(n->kids[0]);
-          a.push(X64Asm::RAX);
+          pushTmp(X64Asm::RAX);
           genExpr(n->kids[1]);
           a.mov_reg(X64Asm::RDX, X64Asm::RAX);
-          a.pop(X64Asm::RCX);
+          popTmp(X64Asm::RCX);
           callRuntime("wandaa_str_concat");
           break;
         }
         if((n->sval=="==" || n->sval=="!=") && bothStr){
           genExpr(n->kids[0]);
-          a.push(X64Asm::RAX);
+          pushTmp(X64Asm::RAX);
           genExpr(n->kids[1]);
           a.mov_reg(X64Asm::RDX, X64Asm::RAX);
-          a.pop(X64Asm::RCX);
+          popTmp(X64Asm::RCX);
           callRuntime("wandaa_str_eq");
           if(n->sval=="!=") a.xor_imm(X64Asm::RAX, 1);
           break;
         }
 
         genExpr(n->kids[0]);
-        a.push(X64Asm::RAX);
+        pushTmp(X64Asm::RAX);
         genExpr(n->kids[1]);
         a.mov_reg(X64Asm::RBX, X64Asm::RAX);
-        a.pop(X64Asm::RAX);
+        popTmp(X64Asm::RAX);
 
         const std::string& op = n->sval;
         if      (op=="+") a.add(X64Asm::RAX, X64Asm::RBX);
@@ -337,16 +391,7 @@ struct Codegen {
     auto bit = builtins.find(target);
     if(bit != builtins.end()) target = bit->second;
 
-    if(n->kids.size() > 4)
-      throw std::runtime_error("umurimo '" + n->sval + "' ufite parametero nyinshi (max 4)");
-
-    // Evaluate left to right onto the stack, then pop into the argument
-    // registers in reverse -- same order the text backend used, so an argument
-    // expression that itself makes a call cannot clobber an earlier argument.
-    for(auto& arg : n->kids){ genExpr(arg); a.push(X64Asm::RAX); }
-    for(int i=(int)n->kids.size()-1; i>=0; --i) a.pop(ARG_REGS[i]);
-
-    callRuntime(target);
+    emitCall(target, n->kids, /*isImport=*/false);
   }
 
   void genPrint(const NodePtr& n){
@@ -419,12 +464,28 @@ struct Codegen {
     a.defineLabel(name);
     definedFns.push_back(name);
 
+    // push rbp is part of the frame, not a temporary: RSP is 16-byte aligned
+    // again once the (16-rounded) frame is subtracted, so reset the counter.
     a.push(X64Asm::RBP);
     a.mov_reg(X64Asm::RBP, X64Asm::RSP);
+    stackSlots = 0;
     if(fi.frameSize > 0) a.sub_imm(X64Asm::RSP, fi.frameSize);
 
-    for(size_t i=0;i<params.size();++i)
-      a.mov_store_rbp(-fi.offset.at(params[i]), ARG_REGS[i]);
+    // Spill incoming arguments into their frame slots.
+    //
+    // Arguments 0-3 arrive in registers. Arguments 5 and up were written by the
+    // caller into the outgoing area; after `push rbp; mov rbp, rsp` argument i's
+    // home sits at [rbp + 16 + 8*i] (8 for the return address, 8 for the saved
+    // rbp), which is where emitCall placed it as [rsp + 8*i].
+    for(size_t i=0;i<params.size();++i){
+      const int slot = -fi.offset.at(params[i]);
+      if(i < 4){
+        a.mov_store_rbp(slot, ARG_REGS[i]);
+      } else {
+        a.mov_load_rbp(X64Asm::RAX, (int32_t)(16 + 8*i));
+        a.mov_store_rbp(slot, X64Asm::RAX);
+      }
+    }
 
     genStmt(body);
 
