@@ -7,7 +7,7 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
-WANDAAC="${WANDAAC:-./wandaac}"
+WANDAAC="${WANDAAC:-./bin/wandaac}"
 [ -x "$WANDAAC" ] || { echo "compiler not found: $WANDAAC"; exit 1; }
 command -v wine >/dev/null || { echo "wine not found"; exit 1; }
 

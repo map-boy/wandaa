@@ -32,6 +32,14 @@
 #include <string>
 #include <vector>
 
+// GetModuleFileNameA, for locating sibling tools next to this executable.
+#ifdef _WIN32
+#  ifndef WIN32_LEAN_AND_MEAN
+#    define WIN32_LEAN_AND_MEAN
+#  endif
+#  include <windows.h>
+#endif
+
 namespace fs = std::filesystem;
 
 namespace {
@@ -238,15 +246,41 @@ Manifest readManifest(const fs::path& path){
 // ---------------------------------------------------------------------------
 const char* PKG_DIR = "ibipapuro";
 
-fs::path compilerPath(){
-    // Look for wandaac beside this binary first, then on PATH.
-    const char* env = std::getenv("WANDAAC");
-    if(env) return env;
+// Where this executable lives, so sibling tools are found regardless of the
+// directory the user happens to be in.
+fs::path selfDir(){
+    std::error_code ec;
 #ifdef _WIN32
-    return "wandaac.exe";
+    char buf[MAX_PATH];
+    const DWORD n = GetModuleFileNameA(nullptr, buf, MAX_PATH);
+    if(n > 0 && n < MAX_PATH) return fs::path(std::string(buf, n)).parent_path();
 #else
-    return "./wandaac";
+    const fs::path self = fs::read_symlink("/proc/self/exe", ec);
+    if(!ec) return self.parent_path();
 #endif
+    return fs::current_path();
+}
+
+fs::path compilerPath(){
+    const char* env = std::getenv("WANDAAC");
+    if(env && *env) return env;
+
+#ifdef _WIN32
+    const std::string exe = "wandaac.exe";
+#else
+    const std::string exe = "wandaac";
+#endif
+    // Beside this binary first -- `bin/wandaa yubaka` run from the project
+    // root must not go looking for the compiler in the project root.
+    const fs::path beside = selfDir() / exe;
+    std::error_code ec;
+    if(fs::exists(beside, ec)) return beside;
+
+    // Then the current directory, for a source checkout that built in place.
+    const fs::path here = fs::current_path() / exe;
+    if(fs::exists(here, ec)) return here;
+
+    return exe;   // last resort: whatever is on PATH
 }
 
 std::string quoteArg(const std::string& s){

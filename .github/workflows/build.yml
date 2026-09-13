@@ -17,9 +17,10 @@ jobs:
         run: |
           # -static so wandaac.exe carries no libstdc++/libgcc DLL dependency and
           # genuinely runs with no toolchain on PATH.
-          g++ -std=c++17 -O2 -Wall -Wextra -static -o wandaac.exe src/lexer.cpp src/parser.cpp src/modules.cpp src/codegen.cpp src/main.cpp
+          New-Item -ItemType Directory -Force -Path bin | Out-Null
+          g++ -std=c++17 -O2 -Wall -Wextra -static -o bin/wandaac.exe src/lexer.cpp src/parser.cpp src/modules.cpp src/codegen.cpp src/main.cpp
           if ($LASTEXITCODE -ne 0) { exit 1 }
-          g++ -std=c++17 -O2 -Wall -Wextra -static -o wandaa.exe src/cli.cpp -lws2_32
+          g++ -std=c++17 -O2 -Wall -Wextra -static -o bin/wandaa.exe src/cli.cpp -lws2_32
           if ($LASTEXITCODE -ne 0) { exit 1 }
 
       - name: Confirm no assembler or linker is used at compile time
@@ -31,7 +32,7 @@ jobs:
           $saved = $env:PATH
           $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot"
           try {
-            .\wandaac.exe examples\gito.waa gito_bare.exe
+            .\bin\wandaac.exe examples\gito.waa gito_bare.exe
             if ($LASTEXITCODE -ne 0) { throw "wandaac failed with a bare PATH" }
             $out = (& .\gito_bare.exe | Out-String).Trim()
             if ($out -ne "1") { throw "expected '1', got '$out'" }

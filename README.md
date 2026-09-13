@@ -28,23 +28,33 @@ Full keyword and operator tables: **[docs/ururimi.md](docs/ururimi.md)**.
 ```powershell
 git clone https://github.com/map-boy/wandaa.git
 cd wandaa
-.\build.ps1 examples\mbere.waa
+.\build.ps1
 ```
 
-That builds the compiler and uses it to compile and run an example.
-To compile a single file:
+That builds the toolchain into `bin\`. Then run a program the way you would
+run a Python script:
 
 ```powershell
-.\wandaac.exe program.waa
-.\program.exe
+.\bin\waa.cmd examples\mbere.waa
 ```
 
-Or start a project, with dependencies and tests:
+Add `bin\` to your `PATH` and it is simply:
 
 ```powershell
-.\wandaa.exe tangira umushinga-wanjye
+waa program.waa
+```
+
+`waa` compiles and runs in one step. The built executable is cached in a
+`.waa_cache` folder beside the source -- the same idea as `__pycache__` -- so
+nothing clutters the directory you are working in, and an unchanged file is not
+recompiled.
+
+For projects with dependencies and tests:
+
+```powershell
+waa-tangira umushinga-wanjye        # or: .\bin\wandaa.exe tangira ...
 cd umushinga-wanjye
-..\wandaa.exe koresha
+..\bin\wandaa.exe koresha
 ```
 
 **Ibisabwa — requirements:** a C++17 compiler (`g++`) to build the compiler
@@ -113,6 +123,24 @@ Ikosa ku murongo: 3
 For what is *not* here yet, see **[ROADMAP.md](ROADMAP.md)** — it is the single
 source of truth for feature status, and this page deliberately does not
 duplicate it.
+
+---
+
+## Uko umushinga wubatse — Layout
+
+```
+bin/          the toolchain: waa (run a file), wandaac (compiler), wandaa (projects)
+src/          compiler source (C++)
+include/      pe_writer.hpp, x64asm.hpp, runtime_blob.hpp (generated)
+lib/          the standard library, written in Wandaa
+examples/     runnable programs; examples/net and examples/cli are run by hand
+tests/        test cases and frozen expected output
+tools/        build-time tooling and maintenance scripts
+docs/         language reference, tutorial, internals
+```
+
+Build output never lands in your source tree: binaries go to `bin/`, and
+`waa` caches compiled programs in `.waa_cache/`. Both are git-ignored.
 
 ---
 

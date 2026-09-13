@@ -10,8 +10,8 @@ set -uo pipefail
 cd "$(dirname "$0")/.."
 ROOT="$PWD"
 
-WANDAA="${WANDAA:-$ROOT/wandaa}"
-export WANDAAC="${WANDAAC:-$ROOT/wandaac}"
+WANDAA="${WANDAA:-$ROOT/bin/wandaa}"
+export WANDAAC="${WANDAAC:-$ROOT/bin/wandaac}"
 [ -x "$WANDAA" ]  || { echo "not built: $WANDAA (run ./build.sh)"; exit 1; }
 [ -x "$WANDAAC" ] || { echo "not built: $WANDAAC (run ./build.sh)"; exit 1; }
 

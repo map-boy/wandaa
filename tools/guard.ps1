@@ -1,6 +1,6 @@
 param(
     [switch]$Baseline,
-    [string]$Wandaac = ".\wandaac.exe"
+    [string]$Wandaac = ".\bin\wandaac.exe"
 )
 
 $ErrorActionPreference = "Stop"
@@ -10,10 +10,11 @@ New-Item -ItemType Directory -Path $guardDir -Force | Out-Null
 
 function Build-Compiler {
     Write-Host "== Building compiler ==" -ForegroundColor Cyan
-    g++ -std=c++17 -O2 -Wall -Wextra -o wandaac.exe src\lexer.cpp src\parser.cpp src\modules.cpp src\codegen.cpp src\main.cpp
-    if ($LASTEXITCODE -ne 0) { throw "wandaac.exe build failed" }
-    g++ -std=c++17 -O2 -Wall -Wextra -o wandaa.exe src\cli.cpp -lws2_32
-    if ($LASTEXITCODE -ne 0) { throw "wandaa.exe build failed" }
+    if (-not (Test-Path bin)) { New-Item -ItemType Directory -Path bin | Out-Null }
+    g++ -std=c++17 -O2 -Wall -Wextra -o bin\wandaac.exe src\lexer.cpp src\parser.cpp src\modules.cpp src\codegen.cpp src\main.cpp
+    if ($LASTEXITCODE -ne 0) { throw "bin\wandaac.exe build failed" }
+    g++ -std=c++17 -O2 -Wall -Wextra -o bin\wandaa.exe src\cli.cpp -lws2_32
+    if ($LASTEXITCODE -ne 0) { throw "bin\wandaa.exe build failed" }
 }
 
 function Run-EndToEndTests {

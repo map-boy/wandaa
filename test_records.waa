@@ -1,7 +1,0 @@
-ubwoko Umuntu { izina, imyaka }
-
-reka p = Umuntu("Uwase", 25);
-andika(p.izina);
-andika(p.imyaka);
-p.imyaka = 26;
-andika(p.imyaka);
