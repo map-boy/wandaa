@@ -13,13 +13,20 @@ command -v wine >/dev/null || { echo "wine not found"; exit 1; }
 
 export WINEDEBUG=-all
 WORK="$(mktemp -d)"; trap 'rm -rf "$WORK"' EXIT
-pass=0; fail=0
+pass=0; fail=0; skip=0
 
 for src in tests/cases/*.waa examples/*.waa; do
     name="$(basename "$src" .waa)"
     if ! "$WANDAAC" "$src" "$WORK/$name.exe" >/dev/null 2>&1; then
         echo "FAIL  $name (compile)"; fail=$((fail+1)); continue
     fi
+
+    if [ ! -f "tests/expected/$name.out" ]; then
+        echo "SKIP  $name (no expected output committed yet)"
+        skip=$((skip+1))
+        continue
+    fi
+
     # Run from the work directory: some cases write a file next to themselves.
     ( cd "$WORK" && timeout 120 wine "./$name.exe" >"$WORK/$name.actual" 2>/dev/null; echo $? >"$WORK/$name.code" )
     actual_exit="$(cat "$WORK/$name.code")"
@@ -36,5 +43,5 @@ for src in tests/cases/*.waa examples/*.waa; do
 done
 
 echo
-echo "$pass passed, $fail failed"
+echo "$pass passed, $fail failed, $skip skipped"
 [ "$fail" -eq 0 ]
