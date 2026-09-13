@@ -1,0 +1,4 @@
+﻿reka izina = "Yves";
+reka ubutumwa = "mwiriwe " + izina;
+andika(ubutumwa);
+andika(uburebure(ubutumwa));

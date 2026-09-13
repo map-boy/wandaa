@@ -1,0 +1,11 @@
+﻿reka nums = [10, 20, 30];
+andika(nums[0]);
+andika(nums[2]);
+nums[1] = 99;
+andika(nums[1]);
+andika(ubunini(nums));
+
+reka ok = andikamo("test.txt", "mwiriwe Mugisha");
+andika(ok);
+reka soma_ryo = soma("test.txt");
+andika(soma_ryo);

@@ -1,0 +1,3 @@
+reka a = 10;
+reka b = 0;
+andika(a / b);

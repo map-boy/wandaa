@@ -1,0 +1,11 @@
+﻿umurimo salamu(izina) {
+  tanga "mwiriwe " + izina;
+}
+reka a = "Mugisha";
+reka b = "Mugisha";
+andika(salamu(a));
+niba (a == b) {
+  andika("birahuye");
+} ubundi {
+  andika("bidahuye");
+}

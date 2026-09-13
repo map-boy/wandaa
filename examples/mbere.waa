@@ -1,0 +1,23 @@
+﻿andika("mwiriwe");
+
+umurimo kubara(a, b) {
+    tanga a + b;
+}
+
+reka x = 10;
+reka y = 20;
+reka result = x + y * 2;
+andika(result);
+
+niba (result > 40) {
+    andika(1);
+} ubundi {
+    andika(0);
+}
+
+mugihe (x > 0) {
+    andika(x);
+    x = x - 1;
+}
+
+andika(kubara(3, 4));
