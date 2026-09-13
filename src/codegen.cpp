@@ -67,7 +67,12 @@ std::unordered_map<std::string,VType> g_arrElemTypes;
 struct RecordTypeInfo {
   std::vector<std::string> fieldNames;
   std::unordered_map<std::string,int> fieldOffset;
+  // Declared byte width per field: 1, 2, 4 or 8. Defaults to 8 when the
+  // declaration gives no `:N` annotation, so records written before widths
+  // existed keep their old layout exactly.
+  std::unordered_map<std::string,int> fieldWidth;
   std::unordered_map<std::string,VType> fieldType;
+  int totalSize = 0;
 };
 std::unordered_map<std::string, RecordTypeInfo> g_recordTypes;
 std::unordered_map<std::string, std::string> g_varRecordType;
@@ -277,13 +282,27 @@ void scanRecordLits(const NodePtr& n, std::unordered_map<std::string,VType>& typ
 void registerRecordTypes(const NodePtr& program){
   for(auto& k : program->kids){
     if(k->type == NT::RecordDecl){
+      // Fields are packed in declaration order with NO automatic alignment
+      // padding: the declared widths are the layout, byte for byte. That is
+      // the whole point -- `ubwoko SockAddrIn { family:2, port:2, addr:4,
+      // zero:8 }` has to match Win32's sockaddr_in exactly, and silently
+      // inserting padding to "helpfully" align a field would corrupt it.
       RecordTypeInfo info;
+      int off = 0;
       for(size_t i=0;i<k->params.size();++i){
         const std::string& f = k->params[i];
+        int w = (i < k->widths.size() && k->widths[i] > 0) ? k->widths[i] : 8;
+        if(w != 1 && w != 2 && w != 4 && w != 8)
+          throw std::runtime_error("ubugari bw'umwanya '" + f + "' muri '" + k->sval +
+                                   "' bugomba kuba 1, 2, 4 cyangwa 8 (byabonetse " +
+                                   std::to_string(w) + ")");
         info.fieldNames.push_back(f);
-        info.fieldOffset[f] = (int)(i*8);
-        info.fieldType[f] = VType::Int;
+        info.fieldOffset[f] = off;
+        info.fieldWidth[f]  = w;
+        info.fieldType[f]   = VType::Int;
+        off += w;
       }
+      info.totalSize = off;
       g_recordTypes[k->sval] = info;
     }
   }
@@ -539,22 +558,47 @@ struct Codegen {
     a.mov_store_base(X64Asm::RCX, 0, X64Asm::RAX);
   }
 
+  // ---- width-aware field access ------------------------------------------
+  //
+  // Stores truncate from the low bits of RAX; loads zero-extend, so a narrow
+  // field still reads back as a clean 64-bit Wandaa integer.
+  void storeFieldRax(R base, int32_t disp, int width){
+    switch(width){
+      case 1: a.mov_store_base_byte (base, disp, X64Asm::RAX); break;
+      case 2: a.mov_store_base_word (base, disp, X64Asm::RAX); break;
+      case 4: a.mov_store_base_dword(base, disp, X64Asm::RAX); break;
+      default: a.mov_store_base     (base, disp, X64Asm::RAX); break;
+    }
+  }
+  void loadFieldRax(R base, int32_t disp, int width){
+    switch(width){
+      case 1: a.mov_load_base_byte_zx (X64Asm::RAX, base, disp); break;
+      case 2: a.mov_load_base_word_zx (X64Asm::RAX, base, disp); break;
+      case 4: a.mov_load_base_dword_zx(X64Asm::RAX, base, disp); break;
+      default: a.mov_load_base        (X64Asm::RAX, base, disp); break;
+    }
+  }
+
   void genRecordLit(const NodePtr& n){
     auto& info = g_recordTypes[n->sval];
     const size_t count = info.fieldNames.size();
     callImport("GetProcessHeap");
     a.mov_reg(X64Asm::RCX, X64Asm::RAX);
-    a.xorr(X64Asm::RDX, X64Asm::RDX);
-    a.mov_imm(X64Asm::R8, (int64_t)(8 + count*8));
+    // HEAP_ZERO_MEMORY: a partially initialised record must not expose heap
+    // garbage to a Win32 call that reads the whole struct (sockaddr_in's
+    // sin_zero is the obvious case).
+    a.mov_imm(X64Asm::RDX, 8);
+    a.mov_imm(X64Asm::R8, (int64_t)(8 + info.totalSize));
     callImport("HeapAlloc");
     a.mov_reg(X64Asm::R12, X64Asm::RAX);
     a.mov_store_imm_base(X64Asm::R12, 0, 0);
     for(size_t i=0;i<n->kids.size() && i<count;++i){
-      const VType want = info.fieldType[info.fieldNames[i]];
+      const std::string& f = info.fieldNames[i];
+      const VType want = info.fieldType[f];
       const VType have = inferType(n->kids[i]);
       genExpr(n->kids[i]);
       coerceRax(have, want);
-      a.mov_store_base(X64Asm::R12, (int32_t)(8 + i*8), X64Asm::RAX);
+      storeFieldRax(X64Asm::R12, (int32_t)(8 + info.fieldOffset[f]), info.fieldWidth[f]);
     }
     a.lea_base(X64Asm::RAX, X64Asm::R12, 8);
   }
@@ -562,25 +606,29 @@ struct Codegen {
   void genFieldAccess(const NodePtr& n){
     genExpr(n->kids[0]);
     const std::string tname = recordTypeNameOf(n->kids[0]);
-    int off = 0;
+    int off = 0, width = 8;
     auto rit = g_recordTypes.find(tname);
     if(rit != g_recordTypes.end()){
       auto fit = rit->second.fieldOffset.find(n->sval);
       if(fit != rit->second.fieldOffset.end()) off = fit->second;
+      auto wit = rit->second.fieldWidth.find(n->sval);
+      if(wit != rit->second.fieldWidth.end()) width = wit->second;
     }
-    a.mov_load_base(X64Asm::RAX, X64Asm::RAX, off);
+    loadFieldRax(X64Asm::RAX, off, width);
   }
 
   void genFieldAssign(const NodePtr& n){
     genExpr(n->kids[0]);
     pushTmp(X64Asm::RAX);
     const std::string tname = recordTypeNameOf(n->kids[0]);
-    int off = 0;
+    int off = 0, width = 8;
     VType want = VType::Int;
     auto rit = g_recordTypes.find(tname);
     if(rit != g_recordTypes.end()){
       auto fit = rit->second.fieldOffset.find(n->sval);
       if(fit != rit->second.fieldOffset.end()) off = fit->second;
+      auto wit = rit->second.fieldWidth.find(n->sval);
+      if(wit != rit->second.fieldWidth.end()) width = wit->second;
       auto tit = rit->second.fieldType.find(n->sval);
       if(tit != rit->second.fieldType.end()) want = tit->second;
     }
@@ -588,7 +636,7 @@ struct Codegen {
     genExpr(n->kids[1]);
     coerceRax(have, want);
     popTmp(X64Asm::RCX);
-    a.mov_store_base(X64Asm::RCX, off, X64Asm::RAX);
+    storeFieldRax(X64Asm::RCX, off, width);
   }
 
   void genExpr(const NodePtr& n){
