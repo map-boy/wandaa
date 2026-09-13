@@ -27,6 +27,8 @@ built) · **Planned** (agreed it should exist) · **Research** (not yet solved).
 - **Modules** — `injiza`, with include-once and cycle detection
 - A standard library written in Wandaa (`lib/`)
 - Runtime fault reporting with source line numbers
+- The `wandaa` project tool: scaffolding, builds, tests, and dependency
+  vendoring with a SHA-256 lockfile that is actually verified
 - 21 end-to-end tests, differential-tested against the previous backend
 
 **The three limitations that block the most:**
@@ -62,35 +64,43 @@ before this lands.
 
 | Item | Status | Notes |
 |---|---|---|
-| **`wandaa` CLI** | Planned | One entry point: `wandaa tangira` (new), `yubaka` (build), `koresha` (run), `gerageza` (test), `hindura` (fmt). `wandaac` stays as the bare compiler underneath. |
-| **Package manager** | Designed | See below. |
-| **Formatter** | Planned | Reuses the existing parser; prints the AST. One canonical style, no options. |
-| **Test runner** | Planned | `gerageza` blocks in source, collected and run by `wandaa gerageza`. |
+| **`wandaa` CLI** | **Done** | `tangira` (new), `ongeraho` (add a dependency), `shakisha` (fetch), `genzura` (verify), `yubaka` (build), `koresha` (run), `gerageza` (test), `verisiyo`. `wandaac` stays as the bare compiler underneath. `hindura` (fmt) is not implemented — see Formatter. |
+| **Package manager — core** | **Done** | `wandaa.toml` manifest, local-path and git dependencies, vendoring into `ibipapuro/`, `wandaa.lock` with a SHA-256 over each package, and `genzura` to verify it. Builds are offline once `ibipapuro/` exists. |
+| **Package manager — registry** | Planned | Today a dependency is a local path or a git URL. A named, versioned registry with semver resolution does not exist yet. See below. |
+| **Test runner** | **Done** (file-based) | `wandaa gerageza` compiles and runs every `.waa` in `tests/`; a test passes when it exits 0. In-source `gerageza` blocks are still Planned. |
+| **Formatter** | Planned | Reuses the existing parser; prints the AST. One canonical style, no options. Would become `wandaa hindura`. |
 | **Language server (LSP)** | Planned | Completion, go-to-definition, inline errors. The parser already tracks line numbers. |
 | **Debugger support** | Research | Requires emitting PDB or DWARF, and splitting `.text` from `.data` first. |
 
-### Package manager design
+### Package manager: what ships today, and what does not
 
-A manifest, `wandaa.toml`:
+**Today.** A manifest, `wandaa.toml`:
 
 ```toml
 [umushinga]              # project
 izina = "urubuga-rwanjye"
 verisiyo = "0.1.0"
+intangiriro = "src/mbere.waa"
 
 [ibisabwa]               # dependencies
-json = "1.2"
-sqlite = { git = "https://github.com/...", tag = "v0.3" }
+ibipimo = { inzira = "../ibipimo" }                          # local path
+json    = { git = "https://github.com/...", tag = "v0.3" }   # git
 ```
 
-- Resolution produces `wandaa.lock` pinning exact versions and content hashes.
-- Dependencies vendor into `ibipapuro/` (packages), which is added to the
-  `injiza` search path — the module system already supports this.
-- The registry is a static index, so it can be mirrored and works offline.
-  **This matters more than it sounds**: a package manager that assumes reliable
-  broadband is not usable everywhere it needs to be. Offline install from a
-  local mirror is a requirement, not a nice-to-have.
-- Signed packages, and a vendored-source mode with no network at all.
+`wandaa shakisha` vendors each dependency into `ibipapuro/`, which is passed to
+the compiler as `-I` search paths, and writes `wandaa.lock` recording a SHA-256
+over each package's sorted `.waa` paths and contents. `wandaa genzura`
+re-hashes and fails on drift. Once `ibipapuro/` exists — fetched once, or
+committed — **building needs no network at all**, and `git` is needed only to
+fetch a git dependency in the first place.
+
+That offline property is a requirement, not a side effect: a package manager
+that assumes reliable broadband is not usable everywhere this language needs to
+work.
+
+**Not yet.** There is no registry, so `json = "1.2"` is not a thing you can
+write — a dependency is a path or a git URL. Semver resolution, a mirrorable
+static index, and package signing are all still Planned.
 
 ---
 
