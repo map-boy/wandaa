@@ -273,7 +273,7 @@ struct Parser {
   }
 
   NodePtr primary(){
-    if(check(Tok::NUM)){ auto tk=advance(); auto n=mk(NT::Num); n->nval=tk.num; return n; }
+    if(check(Tok::NUM)){ auto tk=advance(); auto n=mk(NT::Num); n->nval=tk.num; n->isFloat=tk.isFloat; return n; }
     if(check(Tok::STR)){ auto tk=advance(); auto n=mk(NT::Str); n->sval=tk.text; return n; }
     if(check(Tok::NIBYO)){ advance(); auto n=mk(NT::Bool); n->bval=true; return n; }
     if(check(Tok::OYA)){ advance(); auto n=mk(NT::Bool); n->bval=false; return n; }

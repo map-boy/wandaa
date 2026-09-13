@@ -25,8 +25,17 @@ std::vector<Token> tokenize(const std::string& s){
     if(c=='#'){ while(i<n && s[i]!='\n') i++; continue; }
     if(isdigit((unsigned char)c)){
       size_t start=i;
-      while(i<n && (isdigit((unsigned char)s[i])||s[i]=='.')) i++;
-      out.push_back({Tok::NUM, s.substr(start,i-start), std::stod(s.substr(start,i-start)), line});
+      int dots=0;
+      while(i<n && (isdigit((unsigned char)s[i]) || s[i]=='.')){
+        if(s[i]=='.') dots++;
+        i++;
+      }
+      const std::string lit = s.substr(start, i-start);
+      if(dots > 1)
+        throw std::runtime_error("umubare utaremewe '"+lit+"' ku murongo "+std::to_string(line));
+      if(dots == 1 && lit.back() == '.')
+        throw std::runtime_error("umubare ukeneye ibice nyuma ya '.' : '"+lit+"' ku murongo "+std::to_string(line));
+      out.push_back({Tok::NUM, lit, std::stod(lit), line, dots == 1});
       continue;
     }
     if(isalpha((unsigned char)c)||c=='_'){

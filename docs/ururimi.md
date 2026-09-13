@@ -51,9 +51,9 @@ reka izina = "Mugisha";
 x = x + 1;
 ```
 
-Ibigereranyo bifite ubwoko butatu: **umubare** (integer), **ijambo** (string),
-na **urutonde** (array). Ubwoko buhita bumenyekana — types are inferred, not
-declared.
+Ibigereranyo bifite ubwoko bune: **umubare** (integer), **umubare w'ibice**
+(f64 float), **ijambo** (string), na **urutonde** (array). Ubwoko buhita
+bumenyekana — types are inferred, not declared.
 
 ---
 
@@ -68,8 +68,12 @@ declared.
 | `cyangwa` / `\|\|` | `or`, short-circuit |
 | `si` / `!` | `not` |
 
-Imibarwa yose ni imibare y'ibice 64 (signed 64-bit). `/` ni igabana
-ry'imibare yuzuye — integer division, truncating toward zero.
+Imibare yuzuye ni iy'ibice 64 (signed 64-bit). Imibare y'ibice ni IEEE-754
+`f64`.
+
+`/` hagati y'imibare yuzuye ni igabana ry'imibare yuzuye — **integer division**,
+truncating toward zero. Iyo kimwe mu bibarwa ari umubare w'ibice, byombi bihita
+bihinduka ibice.
 
 **Short circuit.** Muri `a na b`, `b` ntibarwa iyo `a` ari 0. Muri
 `a cyangwa b`, `b` ntibarwa iyo `a` itari 0.
@@ -115,6 +119,70 @@ andika(kubara(3, 4));   # 7
   returns 0.
 - Imirimo ishobora guhamagarwa mbere y'uko isobanurwa — forward references
   are fine, since calls are resolved after the whole program is generated.
+
+---
+
+## 6b. Imibare y'ibice — Floating point
+
+Umubare ufite akadomo ni `f64` (IEEE-754 double). A number written with a
+decimal point is an f64.
+
+```wandaa
+reka igiciro = 19.99;
+reka ingano = 3;
+andika(igiciro * ingano);     # 59.97
+```
+
+**Igabana — division.** Igabana hagati y'imibare yuzuye ntabwo rihinduka:
+
+| Ibarwa | Igisubizo | Ubwoko |
+|---|---|---|
+| `7 / 2` | `3` | umubare wuzuye |
+| `7 / 2.0` | `3.5` | ibice |
+| `7.0 / 2` | `3.5` | ibice |
+| `1.5 + 1` | `2.5` | ibice |
+
+Ibi bituma porogaramu zose za kera zikomeza gukora uko zari zisanzwe — existing
+programs keep their results.
+
+**Kwandika — printing.** `andika` yandika ibice bitarenze 6, ikuraho zeru zo ku
+mpera:
+
+| Agaciro | Byandikwa |
+|---|---|
+| `3.14` | `3.14` |
+| `0.5` | `0.5` |
+| `2.0` | `2` |
+| `-0.25` | `-0.25` |
+| `1.0 / 3.0` | `0.333333` |
+
+Ntabwo ari shortest-round-trip: `0.1 + 0.2` yandika `0.3`, si
+`0.30000000000000004`. Iri ni ihitamo ryo kwandika gusa — a formatting choice,
+changeable later without a language change.
+
+**Guhindura — conversion.**
+
+```wandaa
+andika(mu_bice(7));                  # 7    umubare wuzuye -> ibice
+andika(mu_mubare_wuzuye(3.99));      # 3    ibice -> umubare wuzuye
+andika(mu_mubare_wuzuye(-3.99));     # -3   icyerekezo cya zeru (toward zero)
+```
+
+**NaN na infinity.** `0.0 / 0.0` itanga `NaN`, `1.0 / 0.0` itanga `inf`. NaN
+ntihwanye n'ikintu na kimwe, nayo ubwayo irimo — NaN compares false against
+everything, including itself:
+
+```wandaa
+reka nan = 0.0 / 0.0;
+andika(nan == nan);      # 0
+andika(nan != nan);      # 1
+andika(nan < 1.0);       # 0
+```
+
+**Ibitaraboneka — limitations.** Umurimo wa `hanze` usubiza `double` ntabwo
+urasomwa neza: Win64 isubiza ibice muri XMM0, naho Wandaa isoma RAX. A `hanze`
+function that RETURNS a double is not yet read correctly; passing doubles to one
+works.
 
 ---
 
@@ -171,6 +239,8 @@ strings. Indexing is not bounds-checked; `inyuguti()` is, and returns -1.
 | `igice(s, aho, ingano)` | substring, clamped to the string |
 | `mu_ijambo(n)` | number → string |
 | `mu_mubare(s)` | string → number (0 if unparseable) |
+| `mu_bice(n)` | integer → f64 |
+| `mu_mubare_wuzuye(x)` | f64 → integer, truncating toward zero |
 | `urutonde(n)` | new zero-filled array of n elements |
 | `ijambo(p)` | raw NUL-terminated pointer → Wandaa string |
 | `soma(dosiye)` | read a whole file as a string |
@@ -243,7 +313,6 @@ Ikosa ku murongo: 3
 
 Ibi biri muri [ROADMAP.md](../ROADMAP.md):
 
-- Imibare y'ibice (floating point) — needed for serious numerics
 - `struct` / records
 - `for` loops
 - Ubwoko bwanditswe (explicit type annotations)

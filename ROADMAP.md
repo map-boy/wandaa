@@ -29,16 +29,16 @@ built) · **Planned** (agreed it should exist) · **Research** (not yet solved).
 - Runtime fault reporting with source line numbers
 - The `wandaa` project tool: scaffolding, builds, tests, and dependency
   vendoring with a SHA-256 lockfile that is actually verified
+- **f64 floating point**, with integer division left unchanged
 - 21 end-to-end tests, differential-tested against the previous backend
 
-**The three limitations that block the most:**
+**The limitations that block the most:**
 
-1. **No floating point.** Blocks statistics, graphics, money-with-cents, and
-   all of ML.
-2. **No memory reclamation.** Blocks long-running servers.
-3. **No records/structs.** Blocks ergonomic libraries and self-hosting.
+1. **No memory reclamation.** Blocks long-running servers.
+2. **No records/structs.** Blocks ergonomic libraries and self-hosting.
 
-Everything in Phase 1 below exists to remove those.
+Floating point was the third and is now **Done** — see Phase 1. Everything
+remaining in Phase 1 below exists to remove the other two.
 
 ---
 
@@ -49,7 +49,7 @@ before this lands.
 
 | Item | Status | Notes |
 |---|---|---|
-| **Floating point (`f64`)** | Designed | Needs SSE2 in the encoder (`movsd`, `addsd`, `mulsd`, `divsd`, `cvtsi2sd`, `cvttsd2si`, `ucomisd`), XMM0-3 in the calling convention, a `VType::Float`, and float literals in the lexer. The encoder's ground-truth harness extends to cover it the same way. |
+| **Floating point (`f64`)** | **Done** | SSE2 in the encoder (all forms diffed against GNU `as` across XMM0-15), `VType::Float`, float literals, XMM0-3 in the calling convention, and 6-decimal trimmed printing in the runtime. Integer division is unchanged: `7 / 2` is still 3, and promotion happens only when an operand is already a float. NaN compares false against everything including itself. See WDP #2. Not yet: reading a `double` RETURNED by a `hanze` function, which Win64 passes back in XMM0 rather than RAX. |
 | **Records (`ubwoko`)** | Designed | Named fields over a heap block, laid out like arrays with a type tag. Field access is a constant offset — no dictionary lookup. |
 | **`for` loops** | Planned | `kuri i muri 0..n` — desugars to the existing `mugihe`. |
 | **Bounds-checked indexing** | Planned | Currently unchecked. The check reuses the array count header and the existing crash handler, so it reports a source line. Opt-out for hot loops. |
@@ -133,13 +133,13 @@ Nothing here needs compiler changes. FFI is the whole mechanism.
 
 ## Phase 5 — AI and machine learning
 
-The honest position: **this needs floating point first**, and floating point is
-Phase 1. Everything below is designed but genuinely blocked, and claiming
-otherwise would waste a contributor's time.
+Floating point landed in Phase 1, so the hard prerequisite is cleared. What
+remains below is designed but not built; tensors and the ONNX Runtime binding
+are now unblocked and are the next things anyone can pick up.
 
 | Item | Status | Notes |
 |---|---|---|
-| **`f64` arithmetic** | Designed (Phase 1) | Hard prerequisite. |
+| **`f64` arithmetic** | **Done** (Phase 1) | Was the hard prerequisite for everything else here. |
 | **Tensors (`ikibumbano`)** | Designed | N-dimensional f64 array with shape metadata; strided views. |
 | **BLAS via FFI** | Designed | Bind OpenBLAS/MKL rather than writing matrix multiply. The FFI already supports this; a real GEMM is not something to reimplement. |
 | **ONNX Runtime binding** | Designed | `onnxruntime.dll` gives inference for models trained elsewhere. **This is the highest-value first step**: it makes Wandaa useful for deploying models immediately, without Wandaa having to become a training framework. |

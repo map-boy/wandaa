@@ -155,6 +155,10 @@ public:
     void jmp(const std::string& label)  { emit(0xE9); fixups_.push_back({code.size(), label, 0}); emit32(0); }
     void jz(const std::string& label)   { emit(0x0F); emit(0x84); fixups_.push_back({code.size(), label, 0}); emit32(0); }
     void jnz(const std::string& label)  { emit(0x0F); emit(0x85); fixups_.push_back({code.size(), label, 0}); emit32(0); }
+    // jp -- "parity", which after UCOMISD means UNORDERED, i.e. an operand was
+    // NaN. Every float comparison has to branch this out first, because NaN
+    // compares false against everything including itself.
+    void jp(const std::string& label)   { emit(0x0F); emit(0x8A); fixups_.push_back({code.size(), label, 0}); emit32(0); }
     void call_label(const std::string& label) { emit(0xE8); fixups_.push_back({code.size(), label, 0}); emit32(0); }
 
     // =======================================================================

@@ -1,0 +1,37 @@
+# Floats through the Win64 calling convention: a float argument in position i
+# travels in XMMi, not in the integer register.
+
+umurimo kubyaza(x) { tanga x * 2.0; }
+umurimo teranya(a, b) { tanga a + b; }
+umurimo enye(a, b, c, d) { tanga a + b + c + d; }
+umurimo gatandatu(a, b, c, d, e, f) { tanga a + b + c + d + e + f; }
+umurimo ivanga(n, x, m, y) { tanga x + y + mu_bice(n + m); }
+
+andika(kubyaza(1.5));
+andika(teranya(1.25, 2.25));
+andika(enye(0.5, 1.5, 2.5, 3.5));
+andika(gatandatu(0.5, 0.5, 0.5, 0.5, 0.5, 0.5));   # args 5-6 go via the stack
+andika(ivanga(1, 0.5, 2, 0.25));                    # mixed int/float positions
+
+# The same function called with an int at one site and a float at another. The
+# parameter is inferred Float, so this call site must promote and use XMM too.
+andika(kubyaza(3));
+
+# nested float calls in argument position
+andika(teranya(kubyaza(1.0), kubyaza(2.0)));
+
+# arrays of floats, literal and dynamically sized
+reka a = [1.5, 2.5, 3.5];
+andika(a[0]);
+andika(a[0] + a[1]);
+a[1] = 9.75;
+andika(a[1]);
+
+reka b = urutonde(3);
+b[0] = 0.5;
+andika(b[0]);
+
+# a dynamically sized array holding strings resolves the same way
+reka c = urutonde(2);
+c[0] = "mwiriwe";
+andika(c[0]);

@@ -18,6 +18,10 @@ struct Node {
   // Secondary string payload. For ExternDecl this is the DLL name.
   std::string sval2;
   double nval = 0;
+  // A NUM literal written with a decimal point. The lexer already parses every
+  // number as a double, so without this flag `3.14` and `3` are
+  // indistinguishable in the AST and both silently become integers.
+  bool isFloat = false;
   bool bval = false;
   std::vector<NodePtr> kids;
   std::vector<std::string> params;

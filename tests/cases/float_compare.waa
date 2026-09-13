@@ -1,0 +1,39 @@
+# Float comparison, including NaN, which must compare false against
+# everything -- including itself.
+
+andika(1.5 < 2.5);
+andika(2.5 < 1.5);
+andika(1.5 > 2.5);
+andika(2.5 > 1.5);
+andika(1.5 <= 1.5);
+andika(1.5 >= 1.5);
+andika(1.5 == 1.5);
+andika(1.5 != 1.5);
+andika(1.5 == 2.5);
+andika(1.5 != 2.5);
+
+# mixed int/float
+andika(2 < 2.5);
+andika(3 > 2.5);
+andika(2 == 2.0);
+
+reka nan = 0.0 / 0.0;
+andika(nan);
+andika(nan == nan);     # 0 -- NaN is not equal to itself
+andika(nan != nan);     # 1
+andika(nan < 1.0);
+andika(nan > 1.0);
+andika(nan <= 1.0);
+andika(nan >= 1.0);
+
+reka inf = 1.0 / 0.0;
+andika(inf);
+andika(0.0 - inf);
+andika(inf > 1000000.0);
+
+# larger than 2^63: printed by scaling down, since a double this big has no
+# meaningful low digits anyway
+andika(1000000000000000000000.0);
+
+# conditionals driven by float comparisons
+niba (2.5 > 1.5 na 1.5 < 2.0) { andika("byiza"); } ubundi { andika("bibi"); }

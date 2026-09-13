@@ -40,6 +40,7 @@
 #include "../include/x64asm.hpp"
 #include "../include/runtime_blob.hpp"
 
+#include <cstring>
 #include <fstream>
 #include <map>
 #include <stdexcept>
@@ -51,7 +52,14 @@ namespace {
 
 using R = X64Asm::Reg;
 
-enum class VType { Int, Str, Arr };
+enum class VType { Int, Str, Arr, Float };
+
+// An f64 value travels in a general-purpose register as its raw IEEE-754 bit
+// pattern, and only moves into an XMM register for the arithmetic itself. That
+// keeps every existing mechanism -- 8-byte frame slots, push/pop temporaries,
+// the [rsp+8*i] outgoing-argument area -- working unchanged, at the cost of a
+// movq pair around each operation.
+inline bool isNum(VType t){ return t == VType::Int || t == VType::Float; }
 
 std::unordered_map<std::string,VType> g_fnReturnTypes;
 std::unordered_map<std::string,VType> g_arrElemTypes;
@@ -91,7 +99,8 @@ FnInfo buildFnInfo(const std::vector<std::string>& params, const NodePtr& body){
 VType evalType(const NodePtr& n, const std::unordered_map<std::string,VType>& types){
   switch(n->type){
     case NT::Str: return VType::Str;
-    case NT::Num: case NT::Bool: return VType::Int;
+    case NT::Num:  return n->isFloat ? VType::Float : VType::Int;
+    case NT::Bool: return VType::Int;
     case NT::ArrayLit: return VType::Arr;
     case NT::Index: {
       if(n->kids[0]->type==NT::Var){
@@ -105,12 +114,24 @@ VType evalType(const NodePtr& n, const std::unordered_map<std::string,VType>& ty
       auto it = types.find(n->sval);
       return it != types.end() ? it->second : VType::Int;
     }
-    case NT::Un: return VType::Int;
-    case NT::Bin:
+    case NT::Un:
+      // `si`/`!` yields 0 or 1; unary minus keeps its operand's type.
+      if(n->sval=="!") return VType::Int;
+      return evalType(n->kids[0], types);
+    case NT::Bin: {
       if(n->sval=="&&" || n->sval=="||") return VType::Int;
-      if(n->sval=="+" && evalType(n->kids[0],types)==VType::Str && evalType(n->kids[1],types)==VType::Str)
-        return VType::Str;
+      // Comparisons always yield 0 or 1, whatever they compared.
+      if(n->sval=="<" || n->sval==">" || n->sval=="<=" || n->sval==">=" ||
+         n->sval=="==" || n->sval=="!=") return VType::Int;
+      const VType lt = evalType(n->kids[0], types);
+      const VType rt = evalType(n->kids[1], types);
+      if(n->sval=="+" && lt==VType::Str && rt==VType::Str) return VType::Str;
+      // Arithmetic promotes to f64 when either operand already is one. An
+      // all-integer expression stays integer, so `7 / 2` is still 3 and every
+      // existing program keeps its results (GOVERNANCE principle 5).
+      if(lt==VType::Float || rt==VType::Float) return VType::Float;
       return VType::Int;
+    }
     case NT::Assign: return evalType(n->kids[0], types);
     case NT::Call: {
       auto it = g_fnReturnTypes.find(n->sval);
@@ -118,6 +139,20 @@ VType evalType(const NodePtr& n, const std::unordered_map<std::string,VType>& ty
     }
     default: return VType::Int;
   }
+}
+
+// Record the element type of an array that is written to by index, e.g.
+// `a[0] = 0.5`. Without this only array LITERALS carry an element type, so an
+// array from `urutonde(n)` reads back as Int and a float in it prints as its
+// raw bit pattern.
+//
+// Non-Int types are sticky, matching how parameter types are inferred: reading
+// an element out of the wrong register file or printing it with the wrong
+// routine is worse than widening a mixed array to its non-Int element type.
+void noteIndexedWrite(const NodePtr& n, const std::unordered_map<std::string,VType>& types){
+  if(n->type != NT::IndexAssign || n->kids[0]->type != NT::Var) return;
+  const VType et = evalType(n->kids[2], types);
+  if(et != VType::Int) g_arrElemTypes[n->kids[0]->sval] = et;
 }
 
 void collectTypesRec(const NodePtr& n, std::unordered_map<std::string,VType>& types){
@@ -130,6 +165,7 @@ void collectTypesRec(const NodePtr& n, std::unordered_map<std::string,VType>& ty
       g_arrElemTypes[n->sval] = elemT;
     }
   }
+  noteIndexedWrite(n, types);
   for(auto& k : n->kids) collectTypesRec(k, types);
 }
 
@@ -157,11 +193,17 @@ void inferPass(const NodePtr& n, std::unordered_map<std::string,VType>& types,
     if(vec.size() < n->kids.size()) vec.resize(n->kids.size(), VType::Int);
     for(size_t i=0;i<n->kids.size();++i){
       inferPass(n->kids[i], types, fnParamTypes);
-      if(evalType(n->kids[i], types) == VType::Str) vec[i] = VType::Str;
+      const VType at = evalType(n->kids[i], types);
+      // A parameter is Str or Float if ANY call site passes one. Both are
+      // sticky: the callee reads that parameter out of one register file, and
+      // every caller has to agree, so the widest observed type wins.
+      if(at == VType::Str)        vec[i] = VType::Str;
+      else if(at == VType::Float && vec[i] != VType::Str) vec[i] = VType::Float;
     }
     return;
   }
   if(n->type==NT::Assign){ inferPass(n->kids[0], types, fnParamTypes); return; }
+  noteIndexedWrite(n, types);
   for(auto& k : n->kids) inferPass(k, types, fnParamTypes);
 }
 
@@ -171,6 +213,11 @@ void inferPass(const NodePtr& n, std::unordered_map<std::string,VType>& types,
 
 // Win64: first four integer arguments in RCX, RDX, R8, R9.
 const R ARG_REGS[4] = { X64Asm::RCX, X64Asm::RDX, X64Asm::R8, X64Asm::R9 };
+
+// Win64 pairs the integer and SSE argument registers BY POSITION: a float in
+// argument slot 2 goes in XMM2, not in "the next free XMM". The two files are
+// never both used for the same slot.
+const X64Asm::Xmm XMM_ARGS[4] = { X64Asm::XMM0, X64Asm::XMM1, X64Asm::XMM2, X64Asm::XMM3 };
 
 // The label the runtime blob's _start calls into. Distinct from "main" so a
 // Wandaa program may still define `umurimo main()` without colliding.
@@ -232,6 +279,28 @@ struct Codegen {
 
   int callPad() const { return (stackSlots % 2) ? 8 : 0; }
 
+  // ---- f64 helpers -------------------------------------------------------
+  //
+  // A float lives in RAX as its bit pattern between operations. These two move
+  // between that representation and an actual integer value.
+
+  // RAX holds a signed integer -> replace it with the same value as f64 bits.
+  void raxIntToFloat(){
+    a.cvtsi2sd(X64Asm::XMM0, X64Asm::RAX);
+    a.movq_r64_xmm(X64Asm::RAX, X64Asm::XMM0);
+  }
+  // RAX holds f64 bits -> replace it with the integer value, truncated toward
+  // zero (cvttsd2si, not cvtsd2si, so 2.9 becomes 2 rather than rounding).
+  void raxFloatToInt(){
+    a.movq_xmm_r64(X64Asm::XMM0, X64Asm::RAX);
+    a.cvttsd2si(X64Asm::RAX, X64Asm::XMM0);
+  }
+  // Coerce whatever genExpr just left in RAX from `have` to `want`.
+  void coerceRax(VType have, VType want){
+    if(want == VType::Float && have != VType::Float) raxIntToFloat();
+    else if(want != VType::Float && have == VType::Float) raxFloatToInt();
+  }
+
   // Call with arguments already in registers. Reserves the 32-byte shadow
   // space Win64 requires (caller-cleaned), plus alignment padding.
   void callRuntime(const std::string& rtLabel){
@@ -256,7 +325,8 @@ struct Codegen {
   // evaluation order (which matters when arguments have side effects), needs no
   // shuffling for arguments five and up, and keeps RSP aligned throughout
   // because a single aligned amount is reserved before any of it runs.
-  void emitCall(const std::string& target, const std::vector<NodePtr>& args, bool isImport){
+  void emitCall(const std::string& target, const std::vector<NodePtr>& args, bool isImport,
+                const std::vector<VType>* paramTypes = nullptr){
     const int n = (int)args.size();
     const int homeSlots = (n > 4 ? n : 4);            // shadow space is always 4
     const int pad = ((homeSlots + stackSlots) % 2) ? 8 : 0;
@@ -269,12 +339,31 @@ struct Codegen {
     const int savedSlots = stackSlots;
     stackSlots = 0;
 
+    // Which register file each argument travels in.
+    //
+    // The decision belongs to the PARAMETER's type, not the argument's: the
+    // callee reads parameter i out of one specific file, and inferPass makes a
+    // parameter Float if any call site passes a float. A second call site
+    // passing an integer must therefore promote it and use XMM too, or the
+    // callee would read a register the caller never wrote.
+    std::vector<bool> useXmm((size_t)n, false);
+
     for(int i = 0; i < n; ++i){
+      const VType have = inferType(args[i]);
+      const VType want = (paramTypes && (size_t)i < paramTypes->size())
+                         ? (*paramTypes)[i] : have;
       genExpr(args[i]);
+      coerceRax(have, want);
       a.mov_store_base(X64Asm::RSP, i * 8, X64Asm::RAX);
+      useXmm[(size_t)i] = (want == VType::Float);
     }
-    for(int i = 0; i < n && i < 4; ++i)
-      a.mov_load_base(ARG_REGS[i], X64Asm::RSP, i * 8);
+
+    // Win64 homes argument i at [rsp + 8*i] for BOTH register files, so the
+    // stack layout above is already correct and only the load differs.
+    for(int i = 0; i < n && i < 4; ++i){
+      if(useXmm[(size_t)i]) a.movsd_load(XMM_ARGS[i], X64Asm::RSP, i * 8);
+      else                  a.mov_load_base(ARG_REGS[i], X64Asm::RSP, i * 8);
+    }
 
     if(isImport) a.call_mem_rip("__imp_" + target);
     else         a.call_label(target);
@@ -329,7 +418,19 @@ struct Codegen {
 
   void genExpr(const NodePtr& n){
     switch(n->type){
-      case NT::Num:  a.mov_imm(X64Asm::RAX, (int64_t)n->nval); break;
+      case NT::Num:
+        if(n->isFloat){
+          // The literal's IEEE-754 bit pattern, loaded as an ordinary 64-bit
+          // immediate. No constant pool is needed because mov_imm already
+          // emits movabs for anything outside int32 range.
+          double d = n->nval;
+          int64_t bits;
+          std::memcpy(&bits, &d, sizeof bits);
+          a.mov_imm(X64Asm::RAX, bits);
+        } else {
+          a.mov_imm(X64Asm::RAX, (int64_t)n->nval);
+        }
+        break;
       case NT::Bool: a.mov_imm(X64Asm::RAX, n->bval ? 1 : 0);  break;
       case NT::Str:  a.lea_rip(X64Asm::RAX, addStringLiteral(n->sval)); break;
       case NT::ArrayLit:    genArrayLit(n); break;
@@ -342,6 +443,14 @@ struct Codegen {
           a.test(X64Asm::RAX, X64Asm::RAX);
           a.setcc("e");
           a.movzx_rax_al();
+        } else if(inferType(n->kids[0]) == VType::Float) {
+          // Flip the sign bit rather than computing 0.0 - x, which would turn
+          // -0.0 into +0.0.
+          a.movq_xmm_r64(X64Asm::XMM0, X64Asm::RAX);
+          a.mov_imm(X64Asm::RBX, INT64_MIN);        // 0x8000000000000000
+          a.movq_xmm_r64(X64Asm::XMM1, X64Asm::RBX);
+          a.xorpd(X64Asm::XMM0, X64Asm::XMM1);
+          a.movq_r64_xmm(X64Asm::RAX, X64Asm::XMM0);
         } else {
           a.neg(X64Asm::RAX);
         }
@@ -397,6 +506,61 @@ struct Codegen {
           break;
         }
 
+        // ---- f64 path ----------------------------------------------------
+        const VType lt = inferType(n->kids[0]), rt = inferType(n->kids[1]);
+        if(lt == VType::Float || rt == VType::Float){
+          genExpr(n->kids[0]);
+          if(lt != VType::Float) raxIntToFloat();     // promote the int side
+          pushTmp(X64Asm::RAX);
+          genExpr(n->kids[1]);
+          if(rt != VType::Float) raxIntToFloat();
+          a.mov_reg(X64Asm::RBX, X64Asm::RAX);
+          popTmp(X64Asm::RAX);
+
+          a.movq_xmm_r64(X64Asm::XMM0, X64Asm::RAX);   // XMM0 = left
+          a.movq_xmm_r64(X64Asm::XMM1, X64Asm::RBX);   // XMM1 = right
+
+          const std::string& fop = n->sval;
+          if(fop=="+" || fop=="-" || fop=="*" || fop=="/"){
+            if      (fop=="+") a.addsd(X64Asm::XMM0, X64Asm::XMM1);
+            else if (fop=="-") a.subsd(X64Asm::XMM0, X64Asm::XMM1);
+            else if (fop=="*") a.mulsd(X64Asm::XMM0, X64Asm::XMM1);
+            else               a.divsd(X64Asm::XMM0, X64Asm::XMM1);
+            a.movq_r64_xmm(X64Asm::RAX, X64Asm::XMM0);
+            break;
+          }
+
+          // Comparisons. UCOMISD reports "unordered" (PF=1, and CF=ZF=1) when
+          // either operand is NaN, and NaN must compare false against
+          // everything -- including itself.
+          //
+          // The ordering tests are written with `a`/`ae`, which both require
+          // CF=0, so an unordered result yields 0 without any extra branch.
+          // `<` and `<=` get there by swapping the operands rather than using
+          // `b`/`be`, which would wrongly return 1 for NaN.
+          if(fop=="<" || fop==">" || fop=="<=" || fop==">="){
+            const bool swap  = (fop=="<" || fop=="<=");
+            const bool orEq  = (fop=="<=" || fop==">=");
+            if(swap) a.ucomisd(X64Asm::XMM1, X64Asm::XMM0);
+            else     a.ucomisd(X64Asm::XMM0, X64Asm::XMM1);
+            a.setcc(orEq ? "ae" : "a");
+            a.movzx_rax_al();
+            break;
+          }
+
+          // Equality needs the parity flag explicitly: for NaN, ZF is set, so
+          // a bare sete would report NaN == NaN as true.
+          const std::string Lend = newLabel("Lfcmp");
+          a.ucomisd(X64Asm::XMM0, X64Asm::XMM1);
+          a.mov_imm(X64Asm::RAX, fop=="==" ? 0 : 1);   // MOV does not touch flags
+          a.jp(Lend);                                   // unordered -> keep it
+          a.jnz(Lend);                                  // differ     -> keep it
+          a.mov_imm(X64Asm::RAX, fop=="==" ? 1 : 0);    // ordered and equal
+          a.defineLabel(Lend);
+          break;
+        }
+
+        // ---- integer path ------------------------------------------------
         genExpr(n->kids[0]);
         pushTmp(X64Asm::RAX);
         genExpr(n->kids[1]);
@@ -443,22 +607,45 @@ struct Codegen {
     auto bit = builtins.find(target);
     if(bit != builtins.end()) target = bit->second;
 
+    // The two f64 conversions are single instructions, so they are emitted
+    // inline rather than becoming runtime calls.
+    if(n->sval == "mu_bice" || n->sval == "mu_mubare_wuzuye"){
+      if(n->kids.size() != 1)
+        throw std::runtime_error("'" + n->sval + "' isaba igipimo kimwe gusa");
+      const VType have = inferType(n->kids[0]);
+      genExpr(n->kids[0]);
+      coerceRax(have, n->sval == "mu_bice" ? VType::Float : VType::Int);
+      return;
+    }
+
     const auto ext = externs.find(target);
     if(ext != externs.end()){
       if(bit != builtins.end())
         throw std::runtime_error("izina '" + n->sval + "' ryamaze gufatwa na Wandaa");
+      // A `hanze` function has no declared signature, so each argument travels
+      // in the file its own type implies.
       emitCall(target, n->kids, /*isImport=*/true);
       return;
     }
-    emitCall(target, n->kids, /*isImport=*/false);
+
+    // For a Wandaa function, pass the inferred parameter types so the caller
+    // and the callee agree on which register file each argument uses.
+    const auto pit = fnParamTypes.find(target);
+    emitCall(target, n->kids, /*isImport=*/false,
+             pit != fnParamTypes.end() ? &pit->second : nullptr);
   }
 
   void genPrint(const NodePtr& n){
     for(auto& arg : n->kids){
-      const bool isStr = inferType(arg) == VType::Str;
+      const VType t = inferType(arg);
       genExpr(arg);
       a.mov_reg(X64Asm::RCX, X64Asm::RAX);
-      callRuntime(isStr ? "wandaa_print_strval" : "wandaa_print_int");
+      // wandaa_print_float takes the f64 BIT PATTERN in RCX, not in XMM0. It
+      // is an internal helper, and passing bits keeps every runtime call site
+      // in this file identical.
+      callRuntime(t == VType::Str   ? "wandaa_print_strval" :
+                  t == VType::Float ? "wandaa_print_float"  :
+                                      "wandaa_print_int");
     }
   }
 
@@ -549,9 +736,16 @@ struct Codegen {
     // rbp), which is where emitCall placed it as [rsp + 8*i].
     for(size_t i=0;i<params.size();++i){
       const int slot = -fi.offset.at(params[i]);
+      const bool isFloatParam = (fi.types.count(params[i]) &&
+                                 fi.types.at(params[i]) == VType::Float);
       if(i < 4){
-        a.mov_store_rbp(slot, ARG_REGS[i]);
+        // Arguments 0-3 arrive in a register, which file depending on type.
+        if(isFloatParam) a.movsd_store(X64Asm::RBP, slot, XMM_ARGS[i]);
+        else             a.mov_store_rbp(slot, ARG_REGS[i]);
       } else {
+        // Arguments 5 and up were written by the caller into the outgoing
+        // area; after `push rbp; mov rbp, rsp` argument i's home is at
+        // [rbp + 16 + 8*i] regardless of which file it would have used.
         a.mov_load_rbp(X64Asm::RAX, (int32_t)(16 + 8*i));
         a.mov_store_rbp(slot, X64Asm::RAX);
       }
@@ -598,6 +792,8 @@ struct Codegen {
     g_fnReturnTypes["ijambo"] = VType::Str;
     g_fnReturnTypes["igice"] = VType::Str;
     g_fnReturnTypes["mu_ijambo"] = VType::Str;
+    g_fnReturnTypes["mu_bice"] = VType::Float;
+    g_fnReturnTypes["mu_mubare_wuzuye"] = VType::Int;
 
     std::vector<NodePtr> funcs, rest;
     for(auto& k : program->kids){
