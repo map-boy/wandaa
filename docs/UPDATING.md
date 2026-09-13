@@ -108,7 +108,7 @@ frozen output:
 
 ```bash
 # write tests/cases/ikintu.waa, then freeze what it currently prints
-./wandaac tests/cases/ikintu.waa /tmp/ikintu.exe
+./bin/wandaac tests/cases/ikintu.waa /tmp/ikintu.exe
 ( cd /tmp && wine ./ikintu.exe > ikintu.out 2>/dev/null; echo $? > ikintu.code )
 cp /tmp/ikintu.out  tests/expected/ikintu.out
 cp /tmp/ikintu.code tests/expected/ikintu.exit

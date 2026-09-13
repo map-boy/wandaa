@@ -18,8 +18,7 @@ andika("Mwiriwe Rwanda");
 Yubake:
 
 ```powershell
-.\wandaac.exe mbere.waa
-.\mbere.exe
+waa mbere.waa
 ```
 
 Ibisohoka — output:

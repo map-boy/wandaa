@@ -1,8 +1,0 @@
-reka F = "append_test.txt";
-andikamo(F, "line1
-");
-ongeramo(F, "line2
-");
-ongeramo(F, "line3
-");
-andika(soma(F));

@@ -18,9 +18,12 @@ int main(int argc, char** argv){
   // one per vendored dependency directory.
   std::string srcPath, outPath;
   std::vector<std::string> includeDirs;
+  bool quiet = false;                       // -q: say nothing on success
   for(int i = 1; i < argc; ++i){
     const std::string arg = argv[i];
-    if(arg == "-I"){
+    if(arg == "-q" || arg == "--quiet"){
+      quiet = true;
+    } else if(arg == "-I"){
       if(i + 1 >= argc){ std::cerr << "-I isaba ububiko\n"; return 1; }
       includeDirs.push_back(argv[++i]);
     } else if(arg.rfind("-I", 0) == 0 && arg.size() > 2){
@@ -35,7 +38,7 @@ int main(int argc, char** argv){
     }
   }
   if(srcPath.empty()){
-    std::cerr << "gukoresha: wandaac [-I ububiko] <dosiye.waa> [output.exe]\n";
+    std::cerr << "gukoresha: wandaac [-q] [-I ububiko] <dosiye.waa> [output.exe]\n";
     return 1;
   }
 
@@ -69,7 +72,7 @@ int main(int argc, char** argv){
   try {
     const auto ast = parseProgramWithImports(srcPath, searchPaths);
     generateExe(ast, outPath);
-    std::cout << "Byubatswe: " << outPath << "\n";
+    if(!quiet) std::cout << "Byubatswe: " << outPath << "\n";
   } catch(const std::exception& e){
     std::cerr << "Ikosa ryo gukusanya: " << e.what() << "\n";
     return 1;

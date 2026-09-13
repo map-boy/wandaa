@@ -3,7 +3,7 @@
 # Compiles every example and test case with wandaac.exe -- no assembler, no
 # linker -- runs the resulting native .exe, and asserts stdout and exit code
 # match the frozen expectations in tests\expected\.
-param([string]$Wandaac = ".\wandaac.exe")
+param([string]$Wandaac = ".\bin\wandaac.exe")
 
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
