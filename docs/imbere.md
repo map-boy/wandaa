@@ -175,7 +175,7 @@ carries no MinGW runtime DLL dependency either.
 ## Reading the generated code
 
 ```powershell
-.\wandaac.exe examples\gito.waa gito.exe
+.\bin\wandaac.exe examples\gito.waa gito.exe
 objdump -d -M intel gito.exe          # if you have binutils, for inspection
 objdump -p gito.exe                   # import table
 ```

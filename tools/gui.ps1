@@ -35,7 +35,7 @@ foreach ($c in $commands) {
     $btn.Add_Click({
         param($sender, $eventArgs)
         $output.AppendText("`r`n> wandaa $cmdCopy`r`n")
-        $result = & .\wandaa.exe @($cmdCopy -split " ") 2>&1 | Out-String
+        $result = & .\bin\wandaa.exe @($cmdCopy -split " ") 2>&1 | Out-String
         $output.AppendText($result)
     }.GetNewClosure())
     $form.Controls.Add($btn)

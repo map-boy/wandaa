@@ -1,8 +1,13 @@
-# Build output
+# Build output. Binaries live in bin/; the launchers in there are tracked.
 *.exe
 *.o
 *.obj
-wandaac
+/bin/*
+!/bin/waa.ps1
+!/bin/waa.cmd
+
+# Per-file compile cache created by `waa file.waa`
+.waa_cache/
 
 # Generated assembler text from the old gcc pipeline. The hand-maintained
 # runtime source is NOT generated and must stay tracked.

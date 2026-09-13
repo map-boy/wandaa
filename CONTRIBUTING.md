@@ -41,6 +41,7 @@ Only two things need extra tools, and only for maintainers:
 ## Uko umushinga wubatse — Project layout
 
 ```
+bin/          built toolchain: waa, wandaac, wandaa (git-ignored except waa.*)
 src/          compiler: lexer, parser, module resolver, code generator
 include/      pe_writer.hpp, x64asm.hpp, runtime_blob.hpp (generated)
 lib/          the standard library, written in Wandaa
@@ -89,7 +90,7 @@ See [ROADMAP.md](ROADMAP.md) for what is planned and in what order, and
 case in `tests/cases/` and its expected output in `tests/expected/`:
 
 ```bash
-./wandaac tests/cases/ikintu.waa /tmp/ikintu.exe
+./bin/wandaac tests/cases/ikintu.waa /tmp/ikintu.exe
 wine /tmp/ikintu.exe > tests/expected/ikintu.out
 echo $? > tests/expected/ikintu.exit
 ```
