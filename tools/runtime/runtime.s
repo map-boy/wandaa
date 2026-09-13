@@ -44,6 +44,7 @@
 .globl wandaa_int_to_str
 .globl wandaa_str_to_int
 .globl wandaa_array_new
+.globl wandaa_print_float
 .globl wandaa_read_file
 .globl wandaa_write_file
 # ---- exported data slots (codegen writes wandaa_current_line) ----
@@ -80,6 +81,15 @@ wandaa_empty_str_hdr: .quad 0
 wandaa_empty_str:     .byte 0
 
 wandaa_nl_char:       .byte 10
+
+# Big enough for the widest finite double: sign + up to 309 integer digits
+# (1.8e308) + '.' + 6 fraction digits + newline, with a scratch area at the far
+# end that the digit loops fill backwards.
+.p2align 3
+wandaa_fltbuf:        .space 512, 0
+
+wandaa_nan_msg:       .ascii "NaN\n"
+.set wandaa_nan_len, . - wandaa_nan_msg
 
 wandaa_crash_msg:     .ascii "Ikosa ku murongo: "
 .set wandaa_crash_msg_len, . - wandaa_crash_msg
@@ -682,6 +692,188 @@ wandaa_an_ok:
 
   add rsp, 8
   pop r12
+  pop rbx
+  add rsp, 64
+  pop rbp
+  ret
+
+# ========================= wandaa_print_float(bits) =========================
+#  Prints an f64 with up to 6 decimal places, trailing zeros trimmed, so 3.14
+#  prints "3.14", 0.5 prints "0.5" and 2.0 prints "2".
+#
+#  The argument is the raw IEEE-754 BIT PATTERN in RCX, not a value in XMM0.
+#  This is an internal helper, and taking bits keeps every runtime call site in
+#  codegen.cpp identical to the integer one.
+#
+#  Deliberately NOT shortest-round-trip: 0.1 + 0.2 prints "0.3", not
+#  "0.30000000000000004". Ryu/Grisu is a large, subtle algorithm to hand-write
+#  here and a silent bug in it would be worse than the lost digits. This is a
+#  formatting decision only, revisitable without a language change.
+wandaa_print_float:
+  push rbp
+  mov rbp, rsp
+  sub rsp, 64
+  push rbx
+  push rsi
+  push rdi
+  push r12
+  push r13
+  push r14
+
+  movq xmm0, rcx
+  lea rbx, [rip+wandaa_fltbuf]      # rbx = forward write cursor
+
+  ucomisd xmm0, xmm0                # NaN is the only value unequal to itself
+  jp wandaa_pf_nan
+
+  xorpd xmm1, xmm1                  # sign: compare against +0.0
+  ucomisd xmm0, xmm1
+  jae wandaa_pf_nonneg              # CF=0 means x >= 0 (-0.0 prints as "0")
+  mov byte ptr [rbx], 45            # '-'
+  inc rbx
+  mov rax, 0x8000000000000000
+  movq xmm2, rax
+  xorpd xmm0, xmm2                  # x = |x|, by clearing the sign bit
+wandaa_pf_nonneg:
+
+  mov rax, 0x7FF0000000000000       # +infinity
+  movq xmm3, rax
+  ucomisd xmm0, xmm3
+  jae wandaa_pf_inf
+
+  # Values at or above 2^63 do not fit cvttsd2si, which would return the
+  # "integer indefinite" value. Scale down by 10 until they do, counting the
+  # divisions, and append that many zeros later. Nothing is lost: a double that
+  # large has a spacing well over 1, so its low digits are not meaningful.
+  xor r13, r13                      # r13 = trailing zeros owed
+  mov rax, 0x43E0000000000000       # 2^63 as a double
+  movq xmm4, rax
+  mov rax, 10
+  cvtsi2sd xmm5, rax
+wandaa_pf_scale:
+  ucomisd xmm0, xmm4
+  jb wandaa_pf_scaled
+  divsd xmm0, xmm5
+  inc r13
+  jmp wandaa_pf_scale
+wandaa_pf_scaled:
+
+  cvttsd2si r12, xmm0               # r12 = integer part
+  cvtsi2sd xmm6, r12
+  subsd xmm0, xmm6                  # xmm0 = fractional part, in [0, 1)
+
+  mov rax, 1000000
+  cvtsi2sd xmm7, rax
+  mulsd xmm0, xmm7
+  mov rax, 0x3FE0000000000000       # 0.5, for round-half-up
+  movq xmm8, rax
+  addsd xmm0, xmm8
+  cvttsd2si r14, xmm0               # r14 = fraction as 0..1000000
+
+  mov rax, 1000000                  # rounding can carry into the integer part
+  cmp r14, rax
+  jb wandaa_pf_nocarry
+  xor r14, r14
+  inc r12
+wandaa_pf_nocarry:
+
+  cmp r13, 0                        # if we scaled, the fraction is noise
+  je wandaa_pf_haveparts
+  xor r14, r14
+wandaa_pf_haveparts:
+
+  # Integer digits, generated backwards into the scratch area at the end of the
+  # buffer, then copied forward.
+  lea r9, [rip+wandaa_fltbuf]
+  add r9, 500
+  mov r8, r9
+  mov rax, r12
+wandaa_pf_idigit:
+  xor rdx, rdx
+  mov rcx, 10
+  div rcx
+  add dl, 48
+  dec r9
+  mov [r9], dl
+  cmp rax, 0
+  jne wandaa_pf_idigit
+
+  mov rsi, r9
+  mov rdi, rbx
+  mov rcx, r8
+  sub rcx, r9
+  rep movsb
+  mov rbx, rdi
+
+wandaa_pf_zeros:                    # the zeros owed by the pre-scaling
+  cmp r13, 0
+  je wandaa_pf_frac
+  mov byte ptr [rbx], 48
+  inc rbx
+  dec r13
+  jmp wandaa_pf_zeros
+
+wandaa_pf_frac:
+  cmp r14, 0
+  je wandaa_pf_emit                 # an exact integer prints without a point
+  mov byte ptr [rbx], 46            # '.'
+  inc rbx
+
+  lea r9, [rip+wandaa_fltbuf]       # exactly 6 digits, leading zeros kept
+  add r9, 500
+  mov rax, r14
+  mov r10, 6
+wandaa_pf_fdigit:
+  xor rdx, rdx
+  mov rcx, 10
+  div rcx
+  add dl, 48
+  dec r9
+  mov [r9], dl
+  dec r10
+  cmp r10, 0
+  jne wandaa_pf_fdigit
+
+  mov rsi, r9
+  mov rdi, rbx
+  mov rcx, 6
+  rep movsb
+  mov rbx, rdi
+
+wandaa_pf_trim:                     # r14 != 0, so this stops before the '.'
+  mov al, [rbx-1]
+  cmp al, 48
+  jne wandaa_pf_emit
+  dec rbx
+  jmp wandaa_pf_trim
+
+wandaa_pf_emit:
+  mov byte ptr [rbx], 10            # newline
+  inc rbx
+  lea rcx, [rip+wandaa_fltbuf]
+  mov rdx, rbx
+  sub rdx, rcx
+  call wandaa_print_str
+  jmp wandaa_pf_done
+
+wandaa_pf_inf:                      # any sign character is already in the buffer
+  mov byte ptr [rbx],   105         # 'i'
+  mov byte ptr [rbx+1], 110         # 'n'
+  mov byte ptr [rbx+2], 102         # 'f'
+  add rbx, 3
+  jmp wandaa_pf_emit
+
+wandaa_pf_nan:
+  lea rcx, [rip+wandaa_nan_msg]
+  mov edx, OFFSET wandaa_nan_len
+  call wandaa_print_str
+
+wandaa_pf_done:
+  pop r14
+  pop r13
+  pop r12
+  pop rdi
+  pop rsi
   pop rbx
   add rsp, 64
   pop rbp

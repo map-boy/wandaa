@@ -27,16 +27,18 @@ built) · **Planned** (agreed it should exist) · **Research** (not yet solved).
 - **Modules** — `injiza`, with include-once and cycle detection
 - A standard library written in Wandaa (`lib/`)
 - Runtime fault reporting with source line numbers
+- The `wandaa` project tool: scaffolding, builds, tests, and dependency
+  vendoring with a SHA-256 lockfile that is actually verified
+- **f64 floating point**, with integer division left unchanged
 - 21 end-to-end tests, differential-tested against the previous backend
 
-**The three limitations that block the most:**
+**The limitations that block the most:**
 
-1. **No floating point.** Blocks statistics, graphics, money-with-cents, and
-   all of ML.
-2. **No memory reclamation.** Blocks long-running servers.
-3. **No records/structs.** Blocks ergonomic libraries and self-hosting.
+1. **No memory reclamation.** Blocks long-running servers.
+2. **No records/structs.** Blocks ergonomic libraries and self-hosting.
 
-Everything in Phase 1 below exists to remove those.
+Floating point was the third and is now **Done** — see Phase 1. Everything
+remaining in Phase 1 below exists to remove the other two.
 
 ---
 
@@ -47,7 +49,7 @@ before this lands.
 
 | Item | Status | Notes |
 |---|---|---|
-| **Floating point (`f64`)** | Designed | Needs SSE2 in the encoder (`movsd`, `addsd`, `mulsd`, `divsd`, `cvtsi2sd`, `cvttsd2si`, `ucomisd`), XMM0-3 in the calling convention, a `VType::Float`, and float literals in the lexer. The encoder's ground-truth harness extends to cover it the same way. |
+| **Floating point (`f64`)** | **Done** | SSE2 in the encoder (all forms diffed against GNU `as` across XMM0-15), `VType::Float`, float literals, XMM0-3 in the calling convention, and 6-decimal trimmed printing in the runtime. Integer division is unchanged: `7 / 2` is still 3, and promotion happens only when an operand is already a float. NaN compares false against everything including itself. See WDP #2. Not yet: reading a `double` RETURNED by a `hanze` function, which Win64 passes back in XMM0 rather than RAX. |
 | **Records (`ubwoko`)** | Designed | Named fields over a heap block, laid out like arrays with a type tag. Field access is a constant offset — no dictionary lookup. |
 | **`for` loops** | Planned | `kuri i muri 0..n` — desugars to the existing `mugihe`. |
 | **Bounds-checked indexing** | Planned | Currently unchecked. The check reuses the array count header and the existing crash handler, so it reports a source line. Opt-out for hot loops. |
@@ -62,35 +64,43 @@ before this lands.
 
 | Item | Status | Notes |
 |---|---|---|
-| **`wandaa` CLI** | Planned | One entry point: `wandaa tangira` (new), `yubaka` (build), `koresha` (run), `gerageza` (test), `hindura` (fmt). `wandaac` stays as the bare compiler underneath. |
-| **Package manager** | Designed | See below. |
-| **Formatter** | Planned | Reuses the existing parser; prints the AST. One canonical style, no options. |
-| **Test runner** | Planned | `gerageza` blocks in source, collected and run by `wandaa gerageza`. |
+| **`wandaa` CLI** | **Done** | `tangira` (new), `ongeraho` (add a dependency), `shakisha` (fetch), `genzura` (verify), `yubaka` (build), `koresha` (run), `gerageza` (test), `verisiyo`. `wandaac` stays as the bare compiler underneath. `hindura` (fmt) is not implemented — see Formatter. |
+| **Package manager — core** | **Done** | `wandaa.toml` manifest, local-path and git dependencies, vendoring into `ibipapuro/`, `wandaa.lock` with a SHA-256 over each package, and `genzura` to verify it. Builds are offline once `ibipapuro/` exists. |
+| **Package manager — registry** | Planned | Today a dependency is a local path or a git URL. A named, versioned registry with semver resolution does not exist yet. See below. |
+| **Test runner** | **Done** (file-based) | `wandaa gerageza` compiles and runs every `.waa` in `tests/`; a test passes when it exits 0. In-source `gerageza` blocks are still Planned. |
+| **Formatter** | Planned | Reuses the existing parser; prints the AST. One canonical style, no options. Would become `wandaa hindura`. |
 | **Language server (LSP)** | Planned | Completion, go-to-definition, inline errors. The parser already tracks line numbers. |
 | **Debugger support** | Research | Requires emitting PDB or DWARF, and splitting `.text` from `.data` first. |
 
-### Package manager design
+### Package manager: what ships today, and what does not
 
-A manifest, `wandaa.toml`:
+**Today.** A manifest, `wandaa.toml`:
 
 ```toml
 [umushinga]              # project
 izina = "urubuga-rwanjye"
 verisiyo = "0.1.0"
+intangiriro = "src/mbere.waa"
 
 [ibisabwa]               # dependencies
-json = "1.2"
-sqlite = { git = "https://github.com/...", tag = "v0.3" }
+ibipimo = { inzira = "../ibipimo" }                          # local path
+json    = { git = "https://github.com/...", tag = "v0.3" }   # git
 ```
 
-- Resolution produces `wandaa.lock` pinning exact versions and content hashes.
-- Dependencies vendor into `ibipapuro/` (packages), which is added to the
-  `injiza` search path — the module system already supports this.
-- The registry is a static index, so it can be mirrored and works offline.
-  **This matters more than it sounds**: a package manager that assumes reliable
-  broadband is not usable everywhere it needs to be. Offline install from a
-  local mirror is a requirement, not a nice-to-have.
-- Signed packages, and a vendored-source mode with no network at all.
+`wandaa shakisha` vendors each dependency into `ibipapuro/`, which is passed to
+the compiler as `-I` search paths, and writes `wandaa.lock` recording a SHA-256
+over each package's sorted `.waa` paths and contents. `wandaa genzura`
+re-hashes and fails on drift. Once `ibipapuro/` exists — fetched once, or
+committed — **building needs no network at all**, and `git` is needed only to
+fetch a git dependency in the first place.
+
+That offline property is a requirement, not a side effect: a package manager
+that assumes reliable broadband is not usable everywhere this language needs to
+work.
+
+**Not yet.** There is no registry, so `json = "1.2"` is not a thing you can
+write — a dependency is a path or a git URL. Semver resolution, a mirrorable
+static index, and package signing are all still Planned.
 
 ---
 
@@ -123,13 +133,13 @@ Nothing here needs compiler changes. FFI is the whole mechanism.
 
 ## Phase 5 — AI and machine learning
 
-The honest position: **this needs floating point first**, and floating point is
-Phase 1. Everything below is designed but genuinely blocked, and claiming
-otherwise would waste a contributor's time.
+Floating point landed in Phase 1, so the hard prerequisite is cleared. What
+remains below is designed but not built; tensors and the ONNX Runtime binding
+are now unblocked and are the next things anyone can pick up.
 
 | Item | Status | Notes |
 |---|---|---|
-| **`f64` arithmetic** | Designed (Phase 1) | Hard prerequisite. |
+| **`f64` arithmetic** | **Done** (Phase 1) | Was the hard prerequisite for everything else here. |
 | **Tensors (`ikibumbano`)** | Designed | N-dimensional f64 array with shape metadata; strided views. |
 | **BLAS via FFI** | Designed | Bind OpenBLAS/MKL rather than writing matrix multiply. The FFI already supports this; a real GEMM is not something to reimplement. |
 | **ONNX Runtime binding** | Designed | `onnxruntime.dll` gives inference for models trained elsewhere. **This is the highest-value first step**: it makes Wandaa useful for deploying models immediately, without Wandaa having to become a training framework. |

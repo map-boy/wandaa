@@ -27,6 +27,9 @@
 static const char* RN[16] = { "rax","rcx","rdx","rbx","rsp","rbp","rsi","rdi",
                               "r8","r9","r10","r11","r12","r13","r14","r15" };
 
+static const char* XN[16] = { "xmm0","xmm1","xmm2","xmm3","xmm4","xmm5","xmm6","xmm7",
+                              "xmm8","xmm9","xmm10","xmm11","xmm12","xmm13","xmm14","xmm15" };
+
 struct Harness {
     X64Asm a;
     std::string src = ".intel_syntax noprefix\n.text\n";
@@ -134,6 +137,68 @@ int main(int argc, char** argv) {
     h.note("xor eax, eax");  h.a.xor_eax_eax();
     h.note("ret");           h.a.ret();
 
+    // ---- SSE2 scalar double -----------------------------------------------
+    //
+    // The thing being checked here is prefix order: a mandatory F2/66 prefix
+    // must precede REX. Covering all 16 XMM registers in both operand
+    // positions is what exercises REX.R and REX.B, and the cvt/movq forms add
+    // REX.W on top. XMM8-15 are where a wrong order stops being invisible.
+    auto X = [](int i){ return (X64Asm::Xmm)i; };
+
+    struct { const char* m; void (X64Asm::*fn)(X64Asm::Xmm, X64Asm::Xmm); } SSE2[] = {
+        {"movsd",   &X64Asm::movsd_rr},
+        {"addsd",   &X64Asm::addsd},
+        {"mulsd",   &X64Asm::mulsd},
+        {"subsd",   &X64Asm::subsd},
+        {"divsd",   &X64Asm::divsd},
+        {"sqrtsd",  &X64Asm::sqrtsd},
+        {"ucomisd", &X64Asm::ucomisd},
+        {"xorpd",   &X64Asm::xorpd},
+    };
+    for (auto& op : SSE2)
+        for (int d = 0; d < 16; ++d)
+            for (int sx = 0; sx < 16; ++sx) {
+                h.note(std::string(op.m) + " " + XN[d] + ", " + XN[sx]);
+                (h.a.*op.fn)(X(d), X(sx));
+            }
+
+    // Cross-file conversions and moves: REX.W plus an XMM and a GPR whose
+    // roles differ per instruction. movq r64, xmm is the trap -- the XMM stays
+    // the ModRM.reg operand even though the GPR is the destination.
+    for (int x = 0; x < 16; ++x)
+        for (int g = 0; g < 16; ++g) {
+            h.note(std::string("cvtsi2sd ") + XN[x] + ", " + RN[g]);
+            h.a.cvtsi2sd(X(x), R(g));
+
+            h.note(std::string("cvttsd2si ") + RN[g] + ", " + XN[x]);
+            h.a.cvttsd2si(R(g), X(x));
+
+            h.note(std::string("movq ") + XN[x] + ", " + RN[g]);
+            h.a.movq_xmm_r64(X(x), R(g));
+
+            h.note(std::string("movq ") + RN[g] + ", " + XN[x]);
+            h.a.movq_r64_xmm(R(g), X(x));
+        }
+
+    // Memory forms, over every base register and disp boundary, so the SSE
+    // path hits the same RSP/R12 SIB and RBP/R13 mod=00 cases as the integer
+    // one rather than being assumed to share them.
+    for (int b = 0; b < 16; ++b)
+        for (int32_t dd : DISPS)
+            for (int x : {0, 3, 7, 8, 12, 15}) {
+                const std::string mem = std::string("[") + RN[b] + disp(dd) + "]";
+                h.note(std::string("movsd ") + XN[x] + ", qword ptr " + mem);
+                h.a.movsd_load(X(x), R(b), dd);
+
+                h.note(std::string("movsd qword ptr ") + mem + ", " + XN[x]);
+                h.a.movsd_store(R(b), dd, X(x));
+            }
+
+    // The unsigned setcc forms float comparison needs.
+    for (const char* cc : {"b","a","be","ae","p","np"}) {
+        h.note(std::string("set") + cc + " al"); h.a.setcc(cc);
+    }
+
     // ---- RIP-relative, including the trailing-immediate (tail=4) case ----
     //
     // This is the one that silently produces an off-by-four if the
@@ -176,10 +241,12 @@ int main(int argc, char** argv) {
     h.note("jmp Lback");       h.a.jmp("Lback");
     h.note("jz Lback");        h.a.jz("Lback");
     h.note("jnz Lback");       h.a.jnz("Lback");
+    h.note("jp Lback");        h.a.jp("Lback");
     h.note("call Lback");      h.a.call_label("Lback");
     h.note("jmp Lfwd");        h.a.jmp("Lfwd");
     h.note("jz Lfwd");         h.a.jz("Lfwd");
     h.note("jnz Lfwd");        h.a.jnz("Lfwd");
+    h.note("jp Lfwd");         h.a.jp("Lfwd");
     h.note("call Lfwd");       h.a.call_label("Lfwd");
     pad();
     h.src += "Lfwd:\n";

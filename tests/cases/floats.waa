@@ -1,0 +1,42 @@
+# f64 arithmetic, promotion and printing.
+#
+# Integer division is deliberately unchanged: 7 / 2 is still 3. Promotion to
+# f64 happens only when an operand already is one.
+
+andika(3.14);
+andika(0.5);
+andika(2.0);            # trailing zeros trimmed -> "2"
+andika(-0.25);
+andika(0.0);
+andika(100.0);
+andika(-3.75);
+
+andika(1.5 + 1.5);
+andika(2.5 - 0.5);
+andika(1.5 * 4);
+andika(10.0 / 4.0);
+andika(1.0 / 3.0);
+andika(0.1 + 0.2);      # 0.3 by design, not 0.30000000000000004
+
+andika(7 / 2);          # integer division, unchanged
+andika(7 / 2.0);        # promotes
+andika(7.0 / 2);
+andika(-(2.5));
+
+reka igiciro = 19.99;
+reka ingano = 3;
+andika(igiciro * ingano);
+
+reka i = 0;
+reka acc = 0.0;
+mugihe (i < 4) {
+  acc = acc + 0.25;
+  i = i + 1;
+}
+andika(acc);
+
+# conversions
+andika(mu_bice(7));
+andika(mu_mubare_wuzuye(3.99));     # truncates toward zero
+andika(mu_mubare_wuzuye(-3.99));
+andika(mu_mubare_wuzuye(2.5) + 1);
