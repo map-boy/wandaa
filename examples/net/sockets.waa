@@ -1,0 +1,59 @@
+# Native sockets from Wandaa -- no C++ involved.
+#
+# Lives in examples/net/ rather than examples/ on purpose: tests/run_tests.sh
+# globs examples/*.waa, and this program BINDS A REAL PORT. A port conflict
+# would make the suite fail for an environmental reason, and a flaky test is
+# worse than no test in a project whose whole claim is checkable correctness.
+# Run it by hand:  wandaac examples/net/sockets.waa && ./sockets.exe
+#
+# What it proves: `ubwoko` records with declared byte widths produce a struct
+# Windows itself accepts. getsockname reads the port back out of the kernel's
+# copy, so a layout that is wrong by even one byte shows up as a wrong number.
+
+hanze "ws2_32.dll" WSAStartup(verisiyo, data);
+hanze "ws2_32.dll" socket(af, tayipi, proto);
+hanze "ws2_32.dll" bind(s, addr, len);
+hanze "ws2_32.dll" listen(s, backlog);
+hanze "ws2_32.dll" getsockname(s, addr, lenptr);
+hanze "ws2_32.dll" closesocket(s);
+hanze "ws2_32.dll" WSACleanup();
+hanze "ws2_32.dll" WSAGetLastError();
+
+ubwoko SockAddrIn { family:2, port:2, addr:4, zero:8 }
+
+# host-to-network short, written in Wandaa
+umurimo htons(p) {
+  reka hi = p / 256;
+  reka lo = p - hi * 256;
+  tanga lo * 256 + hi;
+}
+
+# WSADATA is 408 bytes on x64; an array is already a heap pointer.
+reka wsa = urutonde(64);
+reka rc = WSAStartup(514, wsa);
+andika(rc);
+
+reka s = socket(2, 1, 0);
+niba (s == 0 - 1) { andika("socket yanze"); tanga 1; }
+andika("socket yafunguwe");
+
+reka a = SockAddrIn(2, htons(18080), 0, 0);
+reka b = bind(s, &a, 16);
+niba (b != 0) { andika("bind yanze"); andika(WSAGetLastError()); tanga 1; }
+andika("bind yakunze");
+
+reka l = listen(s, 5);
+niba (l != 0) { andika("listen yanze"); tanga 1; }
+andika("listen yakunze");
+
+# Ask Windows what it actually bound, and confirm the port round-trips.
+reka a2 = SockAddrIn(0, 0, 0, 0);
+reka ln = 16;
+reka g = getsockname(s, &a2, &ln);
+andika(g);
+andika(a2.family);
+andika(htons(a2.port));
+
+closesocket(s);
+WSACleanup();
+andika("byarangiye");
