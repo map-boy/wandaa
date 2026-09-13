@@ -10,3 +10,5 @@ wandaac
 !tools/runtime/*.s
 
 /tests/_work/
+
+.guard/hook_output.log
