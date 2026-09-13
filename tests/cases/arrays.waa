@@ -1,0 +1,16 @@
+reka a = [1, 2, 3, 4, 5];
+andika(ubunini(a));
+a[0] = 100;
+a[4] = 500;
+andika(a[0]);
+andika(a[4]);
+andika(a[1] + a[2] + a[3]);
+reka i = 0;
+mugihe (i < 5) { a[i] = a[i] * 2; i = i + 1; }
+i = 0;
+mugihe (i < 5) { andika(a[i]); i = i + 1; }
+reka idx = 2;
+andika(a[idx]);
+andika(a[idx + 1]);
+reka empty = [];
+andika(ubunini(empty));

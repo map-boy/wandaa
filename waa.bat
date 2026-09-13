@@ -1,2 +1,3 @@
 @echo off
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0wandaa.ps1" %*
+REM Build wandaac (if needed) and compile+run a Wandaa program.
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0build.ps1" %*

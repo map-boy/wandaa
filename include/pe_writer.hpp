@@ -95,7 +95,10 @@ public:
     size_t iatSlotOffset(int id) const { return iatSlot_.at(id); }
     void setEntryOffset(size_t off) { entryOffset_ = off; }
 
-    bool writeExe(const std::string& path) {
+    // Build the finished PE image in memory. Split out from writeExe so the
+    // test harness can diff two compilations byte-for-byte without touching
+    // the filesystem.
+    std::vector<uint8_t> buildImage() {
         std::vector<uint8_t> file;
         auto put16f = [&](uint16_t v){ file.push_back(v&0xFF); file.push_back((v>>8)&0xFF); };
         auto put32f = [&](uint32_t v){ for(int i=0;i<4;i++) file.push_back((v>>(8*i))&0xFF); };
@@ -160,10 +163,15 @@ public:
         file.insert(file.end(), buf_.begin(), buf_.end());
         padTo(sizeOfHeaders + sectionRawSize);
 
+        return file;
+    }
+
+    bool writeExe(const std::string& path) {
+        const std::vector<uint8_t> file = buildImage();
         std::ofstream out(path, std::ios::binary);
         if (!out) return false;
         out.write((const char*)file.data(), (std::streamsize)file.size());
-        return true;
+        return out.good();
     }
 
 private:

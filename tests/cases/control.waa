@@ -1,0 +1,14 @@
+reka i = 0;
+reka acc = 0;
+mugihe (i < 10) {
+  reka j = 0;
+  mugihe (j < 10) {
+    niba (j > 5) { acc = acc + j; } ubundi niba (j > 2) { acc = acc + 1; } ubundi { acc = acc - 1; }
+    j = j + 1;
+  }
+  i = i + 1;
+}
+andika(acc);
+niba (acc > 0) {
+  niba (acc > 100) { andika(1); } ubundi { andika(2); }
+} ubundi { andika(3); }
