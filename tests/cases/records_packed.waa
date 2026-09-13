@@ -1,0 +1,26 @@
+# sockaddr_in layout: 2 + 2 + 4 + 8 = 16 bytes, no padding
+ubwoko SockAddrIn { family:2, port:2, addr:4, zero:8 }
+
+reka a = SockAddrIn(2, 20480, 16777343, 0);
+andika(a.family);
+andika(a.port);
+andika(a.addr);
+andika(a.zero);
+
+a.port = 8080;
+andika(a.port);
+
+# truncation: a 2-byte field must keep only the low 16 bits
+a.port = 131071;
+andika(a.port);
+
+# a second record must not overlap the first
+reka b = SockAddrIn(10, 1, 2, 3);
+andika(a.family);
+andika(b.family);
+
+# unannotated record still gets 8-byte fields (backwards compatible)
+ubwoko Umuntu { izina, imyaka }
+reka p = Umuntu("Mugisha", 30);
+andika(p.izina);
+andika(p.imyaka);

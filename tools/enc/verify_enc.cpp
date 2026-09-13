@@ -27,6 +27,14 @@
 static const char* RN[16] = { "rax","rcx","rdx","rbx","rsp","rbp","rsi","rdi",
                               "r8","r9","r10","r11","r12","r13","r14","r15" };
 
+// 8/16/32-bit register names, for the sub-64-bit memory forms.
+static const char* RN8[16]  = { "al","cl","dl","bl","spl","bpl","sil","dil",
+                                "r8b","r9b","r10b","r11b","r12b","r13b","r14b","r15b" };
+static const char* RN16[16] = { "ax","cx","dx","bx","sp","bp","si","di",
+                                "r8w","r9w","r10w","r11w","r12w","r13w","r14w","r15w" };
+static const char* RN32[16] = { "eax","ecx","edx","ebx","esp","ebp","esi","edi",
+                                "r8d","r9d","r10d","r11d","r12d","r13d","r14d","r15d" };
+
 static const char* XN[16] = { "xmm0","xmm1","xmm2","xmm3","xmm4","xmm5","xmm6","xmm7",
                               "xmm8","xmm9","xmm10","xmm11","xmm12","xmm13","xmm14","xmm15" };
 
@@ -136,6 +144,40 @@ int main(int argc, char** argv) {
     h.note("cqo");           h.a.cqo();
     h.note("xor eax, eax");  h.a.xor_eax_eax();
     h.note("ret");           h.a.ret();
+
+    // ---- sub-64-bit memory forms, for C-ABI struct layouts ----------------
+    //
+    // These back `ubwoko` records with declared field widths, which have to
+    // match a Win32 struct byte for byte. The trap being checked is the byte
+    // store: without a REX prefix, encoding src 4-7 as an 8-bit register
+    // silently means AH/CH/DH/BH rather than SPL/BPL/SIL/DIL, so the value
+    // written is a different register's high byte. Covering all 16 sources is
+    // what catches it.
+    for (int b = 0; b < 16; ++b)
+        for (int32_t dd : DISPS) {
+            const std::string mem = std::string("[") + RN[b] + disp(dd) + "]";
+            for (int r = 0; r < 16; ++r) {
+                h.note(std::string("mov BYTE PTR ") + mem + ", " + RN8[r]);
+                h.a.mov_store_base_byte(R(b), dd, R(r));
+
+                h.note(std::string("mov WORD PTR ") + mem + ", " + RN16[r]);
+                h.a.mov_store_base_word(R(b), dd, R(r));
+
+                h.note(std::string("mov DWORD PTR ") + mem + ", " + RN32[r]);
+                h.a.mov_store_base_dword(R(b), dd, R(r));
+            }
+            for (int r : {0, 3, 4, 5, 6, 7, 8, 12, 15}) {
+                h.note(std::string("movzx ") + RN[r] + ", BYTE PTR " + mem);
+                h.a.mov_load_base_byte_zx(R(r), R(b), dd);
+
+                h.note(std::string("movzx ") + RN[r] + ", WORD PTR " + mem);
+                h.a.mov_load_base_word_zx(R(r), R(b), dd);
+
+                // A 32-bit destination zero-extends to 64 bits automatically.
+                h.note(std::string("mov ") + RN32[r] + ", DWORD PTR " + mem);
+                h.a.mov_load_base_dword_zx(R(r), R(b), dd);
+            }
+        }
 
     // ---- SSE2 scalar double -----------------------------------------------
     //

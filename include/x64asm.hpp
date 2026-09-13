@@ -285,27 +285,6 @@ public:
     // is still the ModRM.reg field. The direction lives in the opcode.
     void movq_r64_xmm(Reg dst, Xmm src) { sseRRmixed(0x66, true, 0x7E, src, dst); }
 
-    void ret() { emit(0xC3); }
-
-private:
-    struct Fixup { size_t patchOffset; std::string label; int32_t tail = 0; };
-    std::unordered_map<std::string, size_t> labels_;
-    std::vector<Fixup> fixups_;
-
-    void emit(uint8_t b) { code.push_back(b); }
-    void emit32(uint32_t v) { for (int i=0;i<4;i++) emit((uint8_t)(v >> (8*i))); }
-
-    static uint8_t modrm(int mod, int reg, int rm) {
-        return (uint8_t)(((mod&3)<<6) | ((reg&7)<<3) | (rm&7));
-    }
-    static uint8_t sib(int scale, int index, int base) {
-        return (uint8_t)(((scale&3)<<6) | ((index&7)<<3) | (base&7));
-    }
-    void emitRex(bool W, bool R, bool X, bool B, bool force=false) {
-        if (!W && !R && !X && !B && !force) return;
-        emit((uint8_t)(0x40 | (W<<3) | (R<<2) | (X<<1) | B));
-    }
-
     // ---- sub-64-bit field access, for C-ABI struct layouts (hanze FFI) ----
     // Stores truncate naturally from the low bits of src. Loads zero-extend
     // via movzx so the result is a clean 64-bit Wandaa integer.
@@ -341,6 +320,27 @@ private:
     void mov_load_base_dword_zx(Reg dst, Reg base, int32_t disp) {
         emitRex(false, dst>=8, false, base>=8);
         emit(0x8B); memBaseDisp(dst, base, disp);
+    }
+
+    void ret() { emit(0xC3); }
+
+private:
+    struct Fixup { size_t patchOffset; std::string label; int32_t tail = 0; };
+    std::unordered_map<std::string, size_t> labels_;
+    std::vector<Fixup> fixups_;
+
+    void emit(uint8_t b) { code.push_back(b); }
+    void emit32(uint32_t v) { for (int i=0;i<4;i++) emit((uint8_t)(v >> (8*i))); }
+
+    static uint8_t modrm(int mod, int reg, int rm) {
+        return (uint8_t)(((mod&3)<<6) | ((reg&7)<<3) | (rm&7));
+    }
+    static uint8_t sib(int scale, int index, int base) {
+        return (uint8_t)(((scale&3)<<6) | ((index&7)<<3) | (base&7));
+    }
+    void emitRex(bool W, bool R, bool X, bool B, bool force=false) {
+        if (!W && !R && !X && !B && !force) return;
+        emit((uint8_t)(0x40 | (W<<3) | (R<<2) | (X<<1) | B));
     }
 
     // ---- SSE2 encoding helpers -------------------------------------------
