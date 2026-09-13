@@ -1,0 +1,5 @@
+hanze "kernel32.dll" GetCommandLineA();
+
+reka umurongo = ijambo(GetCommandLineA());
+andika("Umurongo wose (full command line):");
+andika(umurongo);

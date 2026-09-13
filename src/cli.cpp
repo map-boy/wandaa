@@ -620,34 +620,61 @@ int cmdServisi(int port, const fs::path& root){
 #else
             (int)recv(conn, buf, sizeof(buf) - 1, 0);
 #endif
+        std::string method = "GET";
         std::string reqPath = "/";
+        std::string reqBody;
         if(n > 0){
             std::string req(buf, n);
             auto firstSpace = req.find(' ');
             auto secondSpace = (firstSpace == std::string::npos) ? std::string::npos : req.find(' ', firstSpace + 1);
-            if(firstSpace != std::string::npos && secondSpace != std::string::npos)
+            if(firstSpace != std::string::npos && secondSpace != std::string::npos){
+                method = req.substr(0, firstSpace);
                 reqPath = req.substr(firstSpace + 1, secondSpace - firstSpace - 1);
+            }
+            auto headerEnd = req.find("\r\n\r\n");
+            if(headerEnd != std::string::npos)
+                reqBody = req.substr(headerEnd + 4);
         }
-        if(reqPath == "/" ) reqPath = "/index.html";
+        auto qpos = reqPath.find('?'); if(qpos != std::string::npos) reqPath = reqPath.substr(0, qpos); if(reqPath == "/" ) reqPath = "/index.html";
 
-        fs::path filePath = root / fs::path(reqPath.substr(1));
         std::string body;
         std::string status = "200 OK";
         std::string ctype = "text/plain";
 
-        std::error_code ec;
-        auto canonicalRoot = fs::weakly_canonical(root, ec);
-        auto canonicalFile = fs::weakly_canonical(filePath, ec);
-
-        if(ec || canonicalFile.string().find(canonicalRoot.string()) != 0 || !fs::exists(filePath) || fs::is_directory(filePath)){
-            status = "404 Not Found";
-            body = "404 - ntibonetse: " + reqPath;
-            ctype = "text/plain";
+        if(method == "POST" && reqPath == "/api/save"){
+            fs::path dataFile = root / "data.json";
+            std::string existing;
+            if(fs::exists(dataFile)){
+                std::ifstream inF(dataFile, std::ios::binary);
+                std::ostringstream ss; ss << inF.rdbuf();
+                existing = ss.str();
+            }
+            std::string newContent;
+            if(existing.size() >= 2 && existing.front() == '[' && existing.back() == ']' && existing.size() > 2){
+                newContent = existing.substr(0, existing.size() - 1) + "," + reqBody + "]";
+            } else {
+                newContent = "[" + reqBody + "]";
+            }
+            std::ofstream outF(dataFile, std::ios::binary | std::ios::trunc);
+            outF << newContent;
+            body = "{\"ok\":true}";
+            ctype = "application/json";
         } else {
-            std::ifstream f(filePath, std::ios::binary);
-            std::ostringstream ss; ss << f.rdbuf();
-            body = ss.str();
-            ctype = contentTypeFor(filePath);
+            fs::path filePath = root / fs::path(reqPath.substr(1));
+            std::error_code ec;
+            auto canonicalRoot = fs::weakly_canonical(root, ec);
+            auto canonicalFile = fs::weakly_canonical(filePath, ec);
+
+            if(ec || canonicalFile.string().find(canonicalRoot.string()) != 0 || !fs::exists(filePath) || fs::is_directory(filePath)){
+                status = "404 Not Found";
+                body = "404 - ntibonetse: " + reqPath;
+                ctype = "text/plain";
+            } else {
+                std::ifstream f(filePath, std::ios::binary);
+                std::ostringstream ss; ss << f.rdbuf();
+                body = ss.str();
+                ctype = contentTypeFor(filePath);
+            }
         }
 
         std::ostringstream resp;
@@ -659,6 +686,7 @@ int cmdServisi(int port, const fs::path& root){
         std::string respStr = resp.str();
         send(conn, respStr.data(), (int)respStr.size(), 0);
         closeSock(conn);
+        std::cout << method << " " << reqPath << " -> " << status << "\n";
     }
 }
 

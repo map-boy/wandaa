@@ -1,0 +1,68 @@
+hanze "kernel32.dll" GetCommandLineA();
+
+umurimo kubara_ibice(umurongo, ikimenyetso) {
+    reka umubare = 1;
+    reka i = 0;
+    mugihe (i < uburebure(umurongo)) {
+        niba (inyuguti(umurongo, i) == ikimenyetso) {
+            umubare = umubare + 1;
+        }
+        i = i + 1;
+    }
+    tanga umubare;
+}
+
+umurimo gabanya(umurongo, ikimenyetso) {
+    reka umubare = kubara_ibice(umurongo, ikimenyetso);
+    reka ibisubizo = urutonde(umubare);
+    reka intangiriro = 0;
+    reka igice_ka = 0;
+    reka i = 0;
+    mugihe (i < uburebure(umurongo)) {
+        niba (inyuguti(umurongo, i) == ikimenyetso) {
+            ibisubizo[igice_ka] = igice(umurongo, intangiriro, i - intangiriro);
+            igice_ka = igice_ka + 1;
+            intangiriro = i + 1;
+        }
+        i = i + 1;
+    }
+    ibisubizo[igice_ka] = igice(umurongo, intangiriro, uburebure(umurongo) - intangiriro);
+    tanga ibisubizo;
+}
+
+umurimo shaka_inyuguti(umurongo, ikimenyetso, gutangira) {
+    reka i = gutangira;
+    mugihe (i < uburebure(umurongo)) {
+        niba (inyuguti(umurongo, i) == ikimenyetso) {
+            tanga i;
+        }
+        i = i + 1;
+    }
+    tanga -1;
+}
+
+umurimo kubona_argumentari() {
+    reka umurongo_wose = ijambo(GetCommandLineA());
+    reka igufi = shaka_inyuguti(umurongo_wose, 34, 1);
+    niba (igufi == -1) {
+        tanga urutonde(0);
+    }
+    reka isigaye = igice(umurongo_wose, igufi + 1, uburebure(umurongo_wose) - igufi - 1);
+    reka i = 0;
+    mugihe (i < uburebure(isigaye)) {
+        niba (inyuguti(isigaye, i) != 32) {
+            tanga gabanya(igice(isigaye, i, uburebure(isigaye) - i), 32);
+        }
+        i = i + 1;
+    }
+    tanga urutonde(0);
+}
+
+reka args = kubona_argumentari();
+andika("Ubunini bw'ibintu (arg count):");
+andika(mu_ijambo(ubunini(args)));
+reka i = 0;
+mugihe (i < ubunini(args)) {
+    andika(args[i]);
+    i = i + 1;
+}

@@ -47,6 +47,7 @@
 .globl wandaa_print_float
 .globl wandaa_read_file
 .globl wandaa_write_file
+.globl wandaa_append_file
 # ---- exported data slots (codegen writes wandaa_current_line) ----
 .globl wandaa_current_line
 .globl wandaa_empty_str
@@ -289,6 +290,51 @@ wandaa_streq_done:
   pop rbx
   ret
 
+# ===================== wandaa_append_file(path, data) =======================
+# Same shape as wandaa_write_file, but opens with FILE_APPEND_DATA + OPEN_ALWAYS
+# instead of GENERIC_WRITE + CREATE_ALWAYS: Windows then appends every write at
+# EOF atomically, with no truncate and no need to SetFilePointer.
+wandaa_append_file:
+  push rbp
+  mov rbp, rsp
+  sub rsp, 64
+  push rbx
+  push r12
+  push r13
+  sub rsp, 8
+  mov r12, rcx
+  mov r13, rdx
+  mov rcx, r12
+  mov edx, 0x00000004               # FILE_APPEND_DATA
+  xor r8, r8
+  xor r9, r9
+  mov qword ptr [rsp+32], 4         # OPEN_ALWAYS
+  mov qword ptr [rsp+40], 0x80
+  mov qword ptr [rsp+48], 0
+  call qword ptr [rip+__imp_CreateFileA]
+  cmp rax, -1
+  je wandaa_af_fail
+  mov rbx, rax
+  mov rcx, rbx
+  mov rdx, r13
+  mov r8, [r13-8]
+  lea r9, [rip+wandaa_bytesWritten]
+  mov qword ptr [rsp+32], 0
+  call qword ptr [rip+__imp_WriteFile]
+  mov rcx, rbx
+  call qword ptr [rip+__imp_CloseHandle]
+  mov rax, 1
+  jmp wandaa_af_done
+wandaa_af_fail:
+  xor rax, rax
+wandaa_af_done:
+  add rsp, 8
+  pop r13
+  pop r12
+  pop rbx
+  add rsp, 64
+  pop rbp
+  ret
 # ======================== wandaa_read_file(path) ============================
 wandaa_read_file:
   push rbp

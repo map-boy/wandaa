@@ -6,8 +6,7 @@
 enum class NT {
   Num, Str, Bool, Var, Bin, Un, Assign, VarDecl, Call,
   Block, If, While, FuncDecl, Return, Print, ExprStmt, Program,
-  ArrayLit, Index, IndexAssign, ExternDecl, Break, Continue,
-  RecordDecl, RecordLit, FieldAccess, FieldAssign
+  ArrayLit, Index, IndexAssign, ExternDecl, Break, Continue
 };
 
 struct Node;
@@ -26,9 +25,6 @@ struct Node {
   bool bval = false;
   std::vector<NodePtr> kids;
   std::vector<std::string> params;
-  // Per-field byte width for RecordDecl, parallel to params. 0 means not
-  // specified (defaults to 8 bytes), so old-style records still work.
-  std::vector<int> widths;
   int line = 0;
 };
 

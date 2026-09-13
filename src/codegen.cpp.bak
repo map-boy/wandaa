@@ -52,7 +52,7 @@ namespace {
 
 using R = X64Asm::Reg;
 
-enum class VType { Int, Str, Arr, Float, Record };
+enum class VType { Int, Str, Arr, Float };
 
 // An f64 value travels in a general-purpose register as its raw IEEE-754 bit
 // pattern, and only moves into an XMM register for the arithmetic itself. That
@@ -63,24 +63,6 @@ inline bool isNum(VType t){ return t == VType::Int || t == VType::Float; }
 
 std::unordered_map<std::string,VType> g_fnReturnTypes;
 std::unordered_map<std::string,VType> g_arrElemTypes;
-
-struct RecordTypeInfo {
-  std::vector<std::string> fieldNames;
-  std::unordered_map<std::string,int> fieldOffset;
-  std::unordered_map<std::string,VType> fieldType;
-};
-std::unordered_map<std::string, RecordTypeInfo> g_recordTypes;
-std::unordered_map<std::string, std::string> g_varRecordType;
-
-std::string recordTypeNameOf(const NodePtr& n){
-  if(!n) return "";
-  if(n->type == NT::RecordLit) return n->sval;
-  if(n->type == NT::Var){
-    auto it = g_varRecordType.find(n->sval);
-    return it != g_varRecordType.end() ? it->second : "";
-  }
-  return "";
-}
 
 struct FnInfo {
   std::unordered_map<std::string,int> offset;
@@ -128,17 +110,6 @@ VType evalType(const NodePtr& n, const std::unordered_map<std::string,VType>& ty
       return VType::Int;
     }
     case NT::IndexAssign: return evalType(n->kids[2], types);
-    case NT::RecordLit: return VType::Record;
-    case NT::FieldAccess: {
-      const std::string tname = recordTypeNameOf(n->kids[0]);
-      auto rit = g_recordTypes.find(tname);
-      if(rit != g_recordTypes.end()){
-        auto fit = rit->second.fieldType.find(n->sval);
-        if(fit != rit->second.fieldType.end()) return fit->second;
-      }
-      return VType::Int;
-    }
-    case NT::FieldAssign: return evalType(n->kids[1], types);
     case NT::Var: {
       auto it = types.find(n->sval);
       return it != types.end() ? it->second : VType::Int;
@@ -164,20 +135,7 @@ VType evalType(const NodePtr& n, const std::unordered_map<std::string,VType>& ty
     case NT::Assign: return evalType(n->kids[0], types);
     case NT::Call: {
       auto it = g_fnReturnTypes.find(n->sval);
-      if(it != g_fnReturnTypes.end()) return it->second;
-      static const std::unordered_map<std::string,VType> builtinReturnTypes = {
-        {"ijambo",    VType::Str},
-        {"igice",     VType::Str},
-        {"mu_ijambo", VType::Str},
-        {"soma",      VType::Str},
-        {"uburebure", VType::Int},
-        {"ubunini",   VType::Int},
-        {"inyuguti",  VType::Int},
-        {"mu_mubare", VType::Int},
-        {"urutonde",  VType::Arr},
-      };
-      auto bit = builtinReturnTypes.find(n->sval);
-      return bit != builtinReturnTypes.end() ? bit->second : VType::Int;
+      return it != g_fnReturnTypes.end() ? it->second : VType::Int;
     }
     default: return VType::Int;
   }
@@ -197,99 +155,18 @@ void noteIndexedWrite(const NodePtr& n, const std::unordered_map<std::string,VTy
   if(et != VType::Int) g_arrElemTypes[n->kids[0]->sval] = et;
 }
 
-std::unordered_map<std::string,VType> g_fnArrElemTypes;
-
-// Look for `tanga <var>;` inside a function body, where <var> is an array
-// whose element type g_arrElemTypes now knows (from the walk just done).
-// Without this, a function that returns an array -- e.g. `tanga ibisubizo;`
-// -- loses that array's element type the moment it crosses the return
-// boundary, so `reka imirongo = gabanya(...);` at the call site reads
-// back as plain Int no matter how correct gabanya's own body is.
-void findArrayReturnType(const NodePtr& n, const std::string& fnName){
-  if(!n) return;
-  if(n->type==NT::Return && !n->kids.empty()){
-    if(n->kids[0]->type==NT::Var){
-      auto it = g_arrElemTypes.find(n->kids[0]->sval);
-      if(it != g_arrElemTypes.end()) g_fnArrElemTypes[fnName] = it->second;
-    } else if(n->kids[0]->type==NT::Call){
-      // `tanga andereBaTypeOf(...);` -- returning another function's call
-      // directly, with no intermediate variable. That function's own array
-      // element type (if known already -- which requires it to appear
-      // earlier in the file, since collectTypesRec walks top-level
-      // declarations in order) propagates straight through.
-      auto it = g_fnArrElemTypes.find(n->kids[0]->sval);
-      if(it != g_fnArrElemTypes.end()) g_fnArrElemTypes[fnName] = it->second;
-    }
-  }
-  for(auto& k : n->kids) findArrayReturnType(k, fnName);
-}
-
 void collectTypesRec(const NodePtr& n, std::unordered_map<std::string,VType>& types){
   if(!n) return;
-  if(n->type==NT::FuncDecl){
-    // Function bodies get their own scope for local variable types, so a
-    // fresh map keeps them from leaking into (or overwriting) the outer
-    // scope. But array element types (g_arrElemTypes) are a *global* map,
-    // so array writes inside a function body still have to be walked --
-    // otherwise an urutonde() array assigned to by index inside a umurimo
-    // never gets an element type and reads back as raw Int/pointer bits.
-    std::unordered_map<std::string,VType> localTypes;
-    for(auto& k : n->kids) collectTypesRec(k, localTypes);
-    findArrayReturnType(n, n->sval);
-    return;
-  }
+  if(n->type==NT::FuncDecl) return;
   if(n->type==NT::VarDecl){
     types[n->sval] = evalType(n->kids[0], types);
     if(n->kids[0]->type==NT::ArrayLit){
       VType elemT = n->kids[0]->kids.empty() ? VType::Int : evalType(n->kids[0]->kids[0], types);
       g_arrElemTypes[n->sval] = elemT;
-    } else if(n->kids[0]->type==NT::Call){
-      // Propagate a function's known array-element type onto the variable
-      // receiving its return value, e.g. `reka imirongo = gabanya(...);`
-      auto fit = g_fnArrElemTypes.find(n->kids[0]->sval);
-      if(fit != g_fnArrElemTypes.end()) g_arrElemTypes[n->sval] = fit->second;
     }
   }
   noteIndexedWrite(n, types);
   for(auto& k : n->kids) collectTypesRec(k, types);
-}
-
-void scanRecordLits(const NodePtr& n, std::unordered_map<std::string,VType>& types){
-  if(!n) return;
-  if(n->type == NT::VarDecl && !n->kids.empty() && n->kids[0]->type==NT::RecordLit){
-    g_varRecordType[n->sval] = n->kids[0]->sval;
-  }
-  if(n->type == NT::RecordLit){
-    auto rit = g_recordTypes.find(n->sval);
-    if(rit != g_recordTypes.end()){
-      for(size_t i=0;i<n->kids.size() && i<rit->second.fieldNames.size();++i){
-        VType ft = evalType(n->kids[i], types);
-        const std::string& f = rit->second.fieldNames[i];
-        VType& cur = rit->second.fieldType[f];
-        if(ft==VType::Str) cur = VType::Str;
-        else if(ft==VType::Float && cur!=VType::Str) cur = VType::Float;
-      }
-    }
-  }
-  for(auto& c : n->kids) scanRecordLits(c, types);
-}
-
-void registerRecordTypes(const NodePtr& program){
-  for(auto& k : program->kids){
-    if(k->type == NT::RecordDecl){
-      RecordTypeInfo info;
-      for(size_t i=0;i<k->params.size();++i){
-        const std::string& f = k->params[i];
-        info.fieldNames.push_back(f);
-        info.fieldOffset[f] = (int)(i*8);
-        info.fieldType[f] = VType::Int;
-      }
-      g_recordTypes[k->sval] = info;
-    }
-  }
-  std::unordered_map<std::string,VType> types;
-  collectTypesRec(program, types);
-  scanRecordLits(program, types);
 }
 
 void findReturnType(const NodePtr& n, const std::unordered_map<std::string,VType>& types, bool& found, VType& result){
@@ -539,58 +416,6 @@ struct Codegen {
     a.mov_store_base(X64Asm::RCX, 0, X64Asm::RAX);
   }
 
-  void genRecordLit(const NodePtr& n){
-    auto& info = g_recordTypes[n->sval];
-    const size_t count = info.fieldNames.size();
-    callImport("GetProcessHeap");
-    a.mov_reg(X64Asm::RCX, X64Asm::RAX);
-    a.xorr(X64Asm::RDX, X64Asm::RDX);
-    a.mov_imm(X64Asm::R8, (int64_t)(8 + count*8));
-    callImport("HeapAlloc");
-    a.mov_reg(X64Asm::R12, X64Asm::RAX);
-    a.mov_store_imm_base(X64Asm::R12, 0, 0);
-    for(size_t i=0;i<n->kids.size() && i<count;++i){
-      const VType want = info.fieldType[info.fieldNames[i]];
-      const VType have = inferType(n->kids[i]);
-      genExpr(n->kids[i]);
-      coerceRax(have, want);
-      a.mov_store_base(X64Asm::R12, (int32_t)(8 + i*8), X64Asm::RAX);
-    }
-    a.lea_base(X64Asm::RAX, X64Asm::R12, 8);
-  }
-
-  void genFieldAccess(const NodePtr& n){
-    genExpr(n->kids[0]);
-    const std::string tname = recordTypeNameOf(n->kids[0]);
-    int off = 0;
-    auto rit = g_recordTypes.find(tname);
-    if(rit != g_recordTypes.end()){
-      auto fit = rit->second.fieldOffset.find(n->sval);
-      if(fit != rit->second.fieldOffset.end()) off = fit->second;
-    }
-    a.mov_load_base(X64Asm::RAX, X64Asm::RAX, off);
-  }
-
-  void genFieldAssign(const NodePtr& n){
-    genExpr(n->kids[0]);
-    pushTmp(X64Asm::RAX);
-    const std::string tname = recordTypeNameOf(n->kids[0]);
-    int off = 0;
-    VType want = VType::Int;
-    auto rit = g_recordTypes.find(tname);
-    if(rit != g_recordTypes.end()){
-      auto fit = rit->second.fieldOffset.find(n->sval);
-      if(fit != rit->second.fieldOffset.end()) off = fit->second;
-      auto tit = rit->second.fieldType.find(n->sval);
-      if(tit != rit->second.fieldType.end()) want = tit->second;
-    }
-    const VType have = inferType(n->kids[1]);
-    genExpr(n->kids[1]);
-    coerceRax(have, want);
-    popTmp(X64Asm::RCX);
-    a.mov_store_base(X64Asm::RCX, off, X64Asm::RAX);
-  }
-
   void genExpr(const NodePtr& n){
     switch(n->type){
       case NT::Num:
@@ -611,9 +436,6 @@ struct Codegen {
       case NT::ArrayLit:    genArrayLit(n); break;
       case NT::Index:       genIndex(n); break;
       case NT::IndexAssign: genIndexAssign(n); break;
-      case NT::RecordLit:    genRecordLit(n); break;
-      case NT::FieldAccess:  genFieldAccess(n); break;
-      case NT::FieldAssign:  genFieldAssign(n); break;
       case NT::Var:  a.mov_load_rbp(X64Asm::RAX, -curOffset(n->sval)); break;
       case NT::Un:
         genExpr(n->kids[0]);
@@ -771,7 +593,6 @@ struct Codegen {
       {"ubunini",   "wandaa_str_len"},
       {"soma",      "wandaa_read_file"},
       {"andikamo",  "wandaa_write_file"},
-      {"ongeramo",  "wandaa_append_file"},
       // Convert a raw NUL-terminated pointer returned by a `hanze` function
       // into a Wandaa string. Needed because foreign strings carry no length
       // header of their own.
@@ -881,8 +702,7 @@ struct Codegen {
         a.jmp(epilogue);
         break;
       case NT::FuncDecl: break;
-      case NT::ExternDecl: break;
-      case NT::RecordDecl: break;   // declaration only, emits nothing   // declaration only, emits nothing
+      case NT::ExternDecl: break;   // declaration only, emits nothing
       default: genExpr(n);
     }
   }
@@ -968,9 +788,6 @@ struct Codegen {
   std::vector<uint8_t> generate(const NodePtr& program){
     g_fnReturnTypes.clear();
     g_arrElemTypes.clear();
-    g_recordTypes.clear();
-    g_varRecordType.clear();
-    registerRecordTypes(program);
     g_fnReturnTypes["soma"] = VType::Str;
     g_fnReturnTypes["ijambo"] = VType::Str;
     g_fnReturnTypes["igice"] = VType::Str;

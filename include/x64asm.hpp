@@ -301,9 +301,46 @@ private:
     static uint8_t sib(int scale, int index, int base) {
         return (uint8_t)(((scale&3)<<6) | ((index&7)<<3) | (base&7));
     }
-    void emitRex(bool W, bool R, bool X, bool B) {
-        if (!W && !R && !X && !B) return;
+    void emitRex(bool W, bool R, bool X, bool B, bool force=false) {
+        if (!W && !R && !X && !B && !force) return;
         emit((uint8_t)(0x40 | (W<<3) | (R<<2) | (X<<1) | B));
+    }
+
+    // ---- sub-64-bit field access, for C-ABI struct layouts (hanze FFI) ----
+    // Stores truncate naturally from the low bits of src. Loads zero-extend
+    // via movzx so the result is a clean 64-bit Wandaa integer.
+
+    // mov byte ptr [base+disp], r8    88 /r
+    void mov_store_base_byte(Reg base, int32_t disp, Reg src) {
+        bool needForce = (src>=4 && src<8); // avoid AH/CH/DH/BH aliasing
+        emitRex(false, src>=8, false, base>=8, needForce);
+        emit(0x88); memBaseDisp(src, base, disp);
+    }
+    // movzx r64, byte ptr [base+disp]   0F B6 /r
+    void mov_load_base_byte_zx(Reg dst, Reg base, int32_t disp) {
+        emitRex(true, dst>=8, false, base>=8);
+        emit(0x0F); emit(0xB6); memBaseDisp(dst, base, disp);
+    }
+    // mov word ptr [base+disp], r16   66 89 /r
+    void mov_store_base_word(Reg base, int32_t disp, Reg src) {
+        emit(0x66);
+        emitRex(false, src>=8, false, base>=8);
+        emit(0x89); memBaseDisp(src, base, disp);
+    }
+    // movzx r64, word ptr [base+disp]   0F B7 /r
+    void mov_load_base_word_zx(Reg dst, Reg base, int32_t disp) {
+        emitRex(true, dst>=8, false, base>=8);
+        emit(0x0F); emit(0xB7); memBaseDisp(dst, base, disp);
+    }
+    // mov dword ptr [base+disp], r32   89 /r
+    void mov_store_base_dword(Reg base, int32_t disp, Reg src) {
+        emitRex(false, src>=8, false, base>=8);
+        emit(0x89); memBaseDisp(src, base, disp);
+    }
+    // mov r32, dword ptr [base+disp]   8B /r   (writing r32 auto-zero-extends r64)
+    void mov_load_base_dword_zx(Reg dst, Reg base, int32_t disp) {
+        emitRex(false, dst>=8, false, base>=8);
+        emit(0x8B); memBaseDisp(dst, base, disp);
     }
 
     // ---- SSE2 encoding helpers -------------------------------------------

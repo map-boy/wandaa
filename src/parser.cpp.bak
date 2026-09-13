@@ -1,11 +1,9 @@
 #include "../include/parser.hpp"
 #include <stdexcept>
-#include <unordered_set>
 
 namespace {
 struct Parser {
   const std::vector<Token>& t; size_t pos=0;
-  std::unordered_set<std::string> declaredRecords;
   Parser(const std::vector<Token>& toks):t(toks){}
   Token& cur(){ return const_cast<Token&>(t[pos]); }
   bool check(Tok tt){ return cur().type==tt; }
@@ -40,7 +38,6 @@ struct Parser {
     else if(check(Tok::ANDIKA)) __n = printStmt();
     else if(check(Tok::HANZE)) __n = externDecl();
     else if(check(Tok::INJIZA)) __n = importDecl();
-    else if(check(Tok::UBWOKO)) __n = recordDecl();
     else if(check(Tok::HAGARIKA)){ advance(); expect(Tok::SEMI,"';'"); __n = mk(NT::Break); }
     else if(check(Tok::KOMEZA)){ advance(); expect(Tok::SEMI,"';'"); __n = mk(NT::Continue); }
     else if(check(Tok::LBRACE)) __n = block();
@@ -51,31 +48,6 @@ struct Parser {
     }
     if(__n) __n->line = __ln;
     return __n;
-  }
-
-  // ubwoko Umuntu { izina, imyaka }
-  //
-  // Declares a record type: named fields over a heap block, laid out like an
-  // array with each field at a fixed offset. No runtime dictionary lookup --
-  // field access resolves to a constant offset at compile time.
-  NodePtr recordDecl(){
-    advance();
-    auto n = mk(NT::RecordDecl);
-    n->sval = expect(Tok::IDENT, "izina ry'ubwoko").text;
-    expect(Tok::LBRACE, "'{'");
-    auto field = [&](){
-      n->params.push_back(expect(Tok::IDENT,"izina ry'umwanya").text);
-      int w = 0;
-      if(check(Tok::COLON)){ advance(); w = (int)expect(Tok::NUM,"ubunini bw'umwanya").num; }
-      n->widths.push_back(w);
-    };
-    if(!check(Tok::RBRACE)){
-      field();
-      while(check(Tok::COMMA)){ advance(); field(); }
-    }
-    expect(Tok::RBRACE, "'}'");
-    declaredRecords.insert(n->sval);
-    return n;
   }
 
   // hanze "kernel32.dll" Sleep(ms);
@@ -197,13 +169,6 @@ struct Parser {
         n->kids.push_back(val);
         return n;
       }
-      if(left->type==NT::FieldAccess){
-        auto n=mk(NT::FieldAssign);
-        n->sval = left->sval;
-        n->kids.push_back(left->kids[0]);
-        n->kids.push_back(val);
-        return n;
-      }
       throw std::runtime_error("aho ushyira agaciro ntibyemewe");
     }
     return left;
@@ -287,8 +252,7 @@ struct Parser {
     auto n = primary();
     if(n->type==NT::Var && check(Tok::LPAREN)){
       advance();
-      const bool isRecord = declaredRecords.count(n->sval) > 0;
-      auto c=mk(isRecord ? NT::RecordLit : NT::Call); c->sval=n->sval;
+      auto c=mk(NT::Call); c->sval=n->sval;
       if(!check(Tok::RPAREN)){
         c->kids.push_back(expression());
         while(check(Tok::COMMA)){ advance(); c->kids.push_back(expression()); }
@@ -296,23 +260,14 @@ struct Parser {
       expect(Tok::RPAREN,"')'");
       n = c;
     }
-    while(check(Tok::LBRACKET) || check(Tok::DOT)){
-      if(check(Tok::LBRACKET)){
-        advance();
-        auto idx = expression();
-        expect(Tok::RBRACKET,"']'");
-        auto ix = mk(NT::Index);
-        ix->kids.push_back(n);
-        ix->kids.push_back(idx);
-        n = ix;
-      } else {
-        advance();
-        std::string field = expect(Tok::IDENT, "izina ry'umwanya").text;
-        auto fa = mk(NT::FieldAccess);
-        fa->sval = field;
-        fa->kids.push_back(n);
-        n = fa;
-      }
+    while(check(Tok::LBRACKET)){
+      advance();
+      auto idx = expression();
+      expect(Tok::RBRACKET,"']'");
+      auto ix = mk(NT::Index);
+      ix->kids.push_back(n);
+      ix->kids.push_back(idx);
+      n = ix;
     }
     return n;
   }
