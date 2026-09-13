@@ -29,11 +29,19 @@ cd wandaa
 ```
 
 That builds `wandaac.exe` and uses it to compile and run an example.
-To compile your own program:
+To compile a single file:
 
 ```powershell
 .\wandaac.exe program.waa
 .\program.exe
+```
+
+Or start a project, with dependencies and tests:
+
+```powershell
+.\wandaa.exe tangira umushinga-wanjye
+cd umushinga-wanjye
+..\wandaa.exe koresha
 ```
 
 **Ibisabwa — requirements:** a C++17 compiler (`g++`) to build the compiler
@@ -51,6 +59,8 @@ any Windows x86-64 machine with nothing installed.
 - **`hanze`** — call any function in any Windows DLL, with no glue code
 - **`injiza`** — modules, and a standard library written in Wandaa
 - Amakosa avuga umurongo — runtime faults report the source line
+- `wandaa` — imishinga, ibisabwa n'ibigeragezo (projects, dependencies, tests)
+  with a lockfile and SHA-256 verification, and **no network needed to build**
 
 ```wandaa
 injiza "amagambo.waa";
@@ -68,6 +78,7 @@ MessageBoxA(0, hejuru("mwiriwe"), "Wandaa", 0);
 | [docs/kwiga.md](docs/kwiga.md) | **Kwiga Wandaa** — tutorial from zero |
 | [docs/ururimi.md](docs/ururimi.md) | Language reference |
 | [docs/isomero.md](docs/isomero.md) | Standard library reference |
+| [docs/ibikoresho.md](docs/ibikoresho.md) | The `wandaa` project and package tool |
 | [docs/imbere.md](docs/imbere.md) | Compiler internals |
 | [ROADMAP.md](ROADMAP.md) | What is built, what is not, and in what order |
 

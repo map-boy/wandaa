@@ -6,4 +6,5 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 g++ -std=c++17 -O2 -Wall -Wextra -o wandaac src/lexer.cpp src/parser.cpp src/modules.cpp src/codegen.cpp src/main.cpp
-echo "built: ./wandaac"
+g++ -std=c++17 -O2 -Wall -Wextra -o wandaa  src/cli.cpp
+echo "built: ./wandaac (compiler) and ./wandaa (project tool)"

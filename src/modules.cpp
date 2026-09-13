@@ -30,21 +30,38 @@ bool readFile(const std::string& path, std::string& out){
 
 // Normalise enough to recognise the same file reached by different spellings.
 // Not a full realpath -- it collapses separators and "./" segments, which is
-// what matters for include-once and cycle detection in practice.
+// what matters for include-once and cycle detection.
+//
+// The result is also used to OPEN the file, so an absolute path has to survive
+// intact: a leading separator, and a Windows drive prefix, are both preserved.
 std::string canonical(const std::string& path){
+  std::string prefix;
+  size_t start = 0;
+  if(path.size() >= 2 && path[1] == ':' &&
+     ((path[0] >= 'A' && path[0] <= 'Z') || (path[0] >= 'a' && path[0] <= 'z'))){
+    prefix = path.substr(0, 2);                       // "C:"
+    start = 2;
+    if(start < path.size() && (path[start]=='/' || path[start]=='\\')){ prefix += "/"; ++start; }
+  } else if(!path.empty() && (path[0]=='/' || path[0]=='\\')){
+    prefix = "/";
+    start = 1;
+  }
+
   std::vector<std::string> parts;
   std::string cur;
-  for(char c : path){
+  for(size_t i = start; i <= path.size(); ++i){
+    const bool atEnd = (i == path.size());
+    const char c = atEnd ? '/' : path[i];
     if(c == '/' || c == '\\'){
-      if(cur == "." || cur.empty()){ cur.clear(); continue; }
+      if(cur.empty() || cur == "."){ cur.clear(); continue; }
       if(cur == ".." && !parts.empty() && parts.back() != ".."){ parts.pop_back(); cur.clear(); continue; }
       parts.push_back(cur); cur.clear();
     } else cur += c;
   }
-  if(!cur.empty() && cur != ".") parts.push_back(cur);
-  std::string out;
+
+  std::string out = prefix;
   for(size_t i=0;i<parts.size();++i){ if(i) out += "/"; out += parts[i]; }
-  return out;
+  return out.empty() ? std::string(".") : out;
 }
 
 struct Resolver {
