@@ -99,7 +99,7 @@ std::vector<Token> tokenize(const std::string& s){
         break;
       case '&':
         i++; if(peek()=='&'){ out.push_back({Tok::ANDAND,"&&",0,line}); i++; }
-        else throw std::runtime_error("ikimenyetso kitazwi '&' ku murongo "+std::to_string(line));
+        else out.push_back({Tok::AMP,"&",0,line});
         break;
       case '|':
         i++; if(peek()=='|'){ out.push_back({Tok::OROR,"||",0,line}); i++; }

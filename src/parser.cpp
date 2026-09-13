@@ -272,6 +272,16 @@ struct Parser {
   }
 
   NodePtr unary(){
+    // &x -- the address of a variable, for passing an out-parameter to a
+    // `hanze` function. Only a plain variable has an address to take; &(a+b)
+    // has nowhere to point, so it is rejected here rather than silently
+    // producing a garbage pointer into a Win32 call.
+    if(check(Tok::AMP)){
+      const int ln = cur().line;
+      advance();
+      const std::string name = expect(Tok::IDENT, "izina ry'ikigereranyo nyuma ya '&'").text;
+      auto n = mk(NT::AddrOf); n->sval = name; n->line = ln; return n;
+    }
     if(check(Tok::SI) || check(Tok::BANG)){
       advance(); auto r = unary();
       auto n = mk(NT::Un); n->sval = "!"; n->kids.push_back(r); return n;

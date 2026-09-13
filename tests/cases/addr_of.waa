@@ -1,0 +1,27 @@
+# &x -- the address of a variable.
+#
+# QueryPerformanceCounter is a genuine Win32 out-parameter: it writes 8 bytes
+# through the pointer. If &t did not produce a real writable address, t would
+# stay 0 or the process would fault. This is the deterministic half of the
+# socket work; the port-binding half lives in examples/net/sockets.waa.
+hanze "kernel32.dll" QueryPerformanceCounter(p);
+
+reka t = 0;
+andika(t);
+reka ok = QueryPerformanceCounter(&t);
+niba (ok != 0) { andika("hamagawe"); } ubundi { andika("byanze"); }
+niba (t > 0) { andika("yanditse mu mwanya"); } ubundi { andika("nta cyanditswe"); }
+
+# A record is already a heap pointer, so &r must equal r -- taking the address
+# of the frame slot would hand a foreign function a pointer-to-pointer.
+ubwoko S { a:2, b:2 }
+reka r = S(7, 9);
+reka p = &r;
+niba (p == r) { andika("record pointer ihuye"); } ubundi { andika("itandukanye"); }
+andika(r.a);
+andika(r.b);
+
+# Distinct locals must have distinct addresses.
+reka x = 1;
+reka y = 2;
+niba (&x != &y) { andika("aderesi zitandukanye"); } ubundi { andika("aderesi zimwe"); }

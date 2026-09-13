@@ -144,6 +144,10 @@ VType evalType(const NodePtr& n, const std::unordered_map<std::string,VType>& ty
       return VType::Int;
     }
     case NT::FieldAssign: return evalType(n->kids[1], types);
+    // A pointer is just an address. It is an integer as far as the language is
+    // concerned -- there is no pointer arithmetic and nothing dereferences it
+    // except the foreign function it is handed to.
+    case NT::AddrOf: return VType::Int;
     case NT::Var: {
       auto it = types.find(n->sval);
       return it != types.end() ? it->second : VType::Int;
@@ -663,6 +667,27 @@ struct Codegen {
       case NT::FieldAccess:  genFieldAccess(n); break;
       case NT::FieldAssign:  genFieldAssign(n); break;
       case NT::Var:  a.mov_load_rbp(X64Asm::RAX, -curOffset(n->sval)); break;
+      case NT::AddrOf: {
+        // Records, arrays and strings are ALREADY heap pointers: the frame
+        // slot holds the address, so &r is just r. Taking the address of the
+        // slot instead would hand a foreign function a pointer-to-pointer,
+        // which is the kind of bug that corrupts memory rather than failing.
+        //
+        // An integer or float local is stored by value, so its address is the
+        // frame slot itself -- that is what an out-parameter like accept()'s
+        // addrlen needs.
+        const int slot = -curOffset(n->sval);
+        VType vt = VType::Int;
+        if(cur){
+          auto it = cur->types.find(n->sval);
+          if(it != cur->types.end()) vt = it->second;
+        }
+        if(vt == VType::Record || vt == VType::Arr || vt == VType::Str)
+          a.mov_load_rbp(X64Asm::RAX, slot);
+        else
+          a.lea_rbp(X64Asm::RAX, slot);
+        break;
+      }
       case NT::Un:
         genExpr(n->kids[0]);
         if(n->sval=="!"){                  // si / ! -- logical negation to 0/1
