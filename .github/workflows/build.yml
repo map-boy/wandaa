@@ -1,4 +1,4 @@
-name: build
+﻿name: build
 
 on: [push, pull_request]
 
@@ -19,7 +19,7 @@ jobs:
           # genuinely runs with no toolchain on PATH.
           g++ -std=c++17 -O2 -Wall -Wextra -static -o wandaac.exe src/lexer.cpp src/parser.cpp src/modules.cpp src/codegen.cpp src/main.cpp
           if ($LASTEXITCODE -ne 0) { exit 1 }
-          g++ -std=c++17 -O2 -Wall -Wextra -static -o wandaa.exe src/cli.cpp
+          g++ -std=c++17 -O2 -Wall -Wextra -static -o wandaa.exe src/cli.cpp -lws2_32
           if ($LASTEXITCODE -ne 0) { exit 1 }
 
       - name: Confirm no assembler or linker is used at compile time
@@ -100,3 +100,4 @@ jobs:
 
       - name: Project and package tool
         run: ./tests/test_cli.sh
+
