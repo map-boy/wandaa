@@ -1,0 +1,11 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Ikibazo ku mutekano — Security vulnerability
+    url: https://github.com/map-boy/wandaa/security/advisories/new
+    about: Report privately. Please do not open a public issue for a security problem.
+  - name: Gusaba ubufasha bw'ikigo — Enterprise support
+    url: https://github.com/map-boy/wandaa/blob/main/ENTERPRISE.md
+    about: Commercial support, training and long-term support builds from VAF UBWENGE TECH.
+  - name: Kwiga Wandaa — Learning Wandaa
+    url: https://github.com/map-boy/wandaa/blob/main/docs/kwiga.md
+    about: Start here if you are new. Questions from beginners are welcome as issues.

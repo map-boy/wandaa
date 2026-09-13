@@ -56,6 +56,17 @@ jobs:
       - name: Encoder ground truth vs GNU as
         run: ./tools/enc/run_verify.sh
 
+      - name: Standard library docs match lib/
+        run: |
+          python3 tools/gen_stdlib_docs.py
+          if ! git diff --quiet --exit-code docs/isomero.md; then
+            echo "::error::docs/isomero.md is stale."
+            echo "Regenerate it with: python3 tools/gen_stdlib_docs.py"
+            git diff --stat docs/isomero.md
+            exit 1
+          fi
+          echo "stdlib docs are up to date"
+
       - name: Runtime blob matches runtime.s
         run: |
           ./tools/build_runtime.sh
