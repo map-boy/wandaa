@@ -30,8 +30,15 @@ foreach ($src in $sources) {
     $exitCode = $LASTEXITCODE
     Pop-Location
 
-    $expectedOut  = (Get-Content "tests\expected\$name.out" -Raw -ErrorAction SilentlyContinue)
-    $expectedExit = [int](Get-Content "tests\expected\$name.exit" -Raw).Trim()
+    $expectedOutPath = "tests\expected\$name.out"
+    $expectedExitPath = "tests\expected\$name.exit"
+    if (-not (Test-Path $expectedExitPath)) {
+        Write-Host "SKIP  $name (no expected output committed yet)" -ForegroundColor Yellow
+        Pop-Location
+        continue
+    }
+    $expectedOut  = (Get-Content $expectedOutPath -Raw -ErrorAction SilentlyContinue)
+    $expectedExit = [int](Get-Content $expectedExitPath -Raw).Trim()
     if ($null -eq $expectedOut) { $expectedOut = "" }
 
     # Normalise line endings so the expectations stay platform-neutral.
@@ -52,3 +59,4 @@ Remove-Item -Recurse -Force $work -ErrorAction SilentlyContinue
 Write-Host ""
 Write-Host "$pass passed, $fail failed"
 if ($fail -gt 0) { exit 1 }
+

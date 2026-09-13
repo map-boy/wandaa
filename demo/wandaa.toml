@@ -1,0 +1,9 @@
+[umushinga]
+izina = "demo"
+verisiyo = "0.1.0"
+intangiriro = "src/mbere.waa"
+
+# Ibisabwa -- dependencies. Vendored into ibipapuro/ by `wandaa shakisha`.
+#   amagambo = { inzira = "../amagambo" }
+#   json     = { git = "https://github.com/...", tag = "v1.0" }
+[ibisabwa]

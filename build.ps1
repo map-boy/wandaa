@@ -12,7 +12,7 @@ Set-Location $PSScriptRoot
 g++ -std=c++17 -O2 -static -o wandaac.exe src\lexer.cpp src\parser.cpp src\modules.cpp src\codegen.cpp src\main.cpp
 if ($LASTEXITCODE -ne 0) { exit 1 }
 
-g++ -std=c++17 -O2 -static -o wandaa.exe src\cli.cpp
+g++ -std=c++17 -O2 -static -o wandaa.exe src\cli.cpp -lws2_32
 if ($LASTEXITCODE -ne 0) { exit 1 }
 
 $exe = [System.IO.Path]::ChangeExtension($Source, ".exe")
@@ -21,3 +21,4 @@ if ($LASTEXITCODE -ne 0) { exit 1 }
 
 Write-Host "Byubatswe: $exe"
 & $exe
+

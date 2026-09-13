@@ -502,6 +502,199 @@ int cmdOngeraho(const std::string& name, const std::string& source){
     return 0;
 }
 
+// ---------------------------------------------------------------------------
+//  shyiraho -- create a new file (optionally with starter content), refusing
+//  to overwrite an existing one. Mirrors tangira's "never clobber" behaviour.
+// ---------------------------------------------------------------------------
+int cmdShyiraho(const std::string& path, const std::string& content){
+    fs::path p(path);
+    if(fs::exists(p)){ std::cerr << "dosiye '" << path << "' isanzwe ihari\n"; return 1; }
+    std::error_code ec;
+    if(p.has_parent_path()) fs::create_directories(p.parent_path(), ec);
+    std::ofstream f(p);
+    if(!f){ std::cerr << "ntibishoboka gukora '" << path << "'\n"; return 1; }
+    f << content;
+    if(!content.empty() && content.back() != '\n') f << "\n";
+    std::cout << "byakozwe: " << path << "\n";
+    return 0;
+}
+
+// ---------------------------------------------------------------------------
+//  hindura -- append a line to an existing file. Refuses missing files rather
+//  than silently creating them, so shyiraho stays the single "create" path.
+// ---------------------------------------------------------------------------
+int cmdHindura(const std::string& path, const std::string& content){
+    fs::path p(path);
+    if(!fs::exists(p)){
+        std::cerr << "dosiye '" << path << "' ntibonetse -- koresha 'wandaa shyiraho' mbere\n";
+        return 1;
+    }
+    std::ofstream f(p, std::ios::app);
+    if(!f){ std::cerr << "ntibishoboka kwandika muri '" << path << "'\n"; return 1; }
+    f << content;
+    if(!content.empty() && content.back() != '\n') f << "\n";
+    std::cout << "byongeweho: " << path << "\n";
+    return 0;
+}
+
+// ---------------------------------------------------------------------------
+//  serivisi -- a minimal static-file HTTP server. Independent of the Wandaa
+//  language's own (still-blocked) server story: this is the CLI tool itself
+//  acting as a server, in plain C++, no records/memory-reclamation needed.
+// ---------------------------------------------------------------------------
+#ifdef _WIN32
+  #include <winsock2.h>
+  #include <ws2tcpip.h>
+  #pragma comment(lib, "ws2_32.lib")
+  using socket_t = SOCKET;
+  static const socket_t INVALID_SOCK = INVALID_SOCKET;
+  static void closeSock(socket_t s){ closesocket(s); }
+#else
+  #include <sys/socket.h>
+  #include <netinet/in.h>
+  #include <unistd.h>
+  using socket_t = int;
+  static const socket_t INVALID_SOCK = -1;
+  static void closeSock(socket_t s){ close(s); }
+#endif
+
+static std::string contentTypeFor(const fs::path& p){
+    auto ext = p.extension().string();
+    if(ext == ".html" || ext == ".htm") return "text/html";
+    if(ext == ".css") return "text/css";
+    if(ext == ".js") return "application/javascript";
+    if(ext == ".json") return "application/json";
+    if(ext == ".png") return "image/png";
+    if(ext == ".jpg" || ext == ".jpeg") return "image/jpeg";
+    if(ext == ".svg") return "image/svg+xml";
+    return "text/plain";
+}
+
+int cmdServisi(int port, const fs::path& root){
+#ifdef _WIN32
+    WSADATA wsa;
+    if(WSAStartup(MAKEWORD(2,2), &wsa) != 0){ std::cerr << "WSAStartup byanze\n"; return 1; }
+#endif
+    socket_t srv = socket(AF_INET, SOCK_STREAM, 0);
+    if(srv == INVALID_SOCK){ std::cerr << "gukora socket byanze\n"; return 1; }
+
+    int yes = 1;
+    setsockopt(srv, SOL_SOCKET, SO_REUSEADDR, (const char*)&yes, sizeof(yes));
+
+    sockaddr_in addr{};
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = INADDR_ANY;
+    addr.sin_port = htons((uint16_t)port);
+
+    if(bind(srv, (sockaddr*)&addr, sizeof(addr)) != 0){
+        std::cerr << "bind kuri porto " << port << " byanze (hari ikindi gikoresha iyo porto?)\n";
+        return 1;
+    }
+    if(listen(srv, 16) != 0){ std::cerr << "listen byanze\n"; return 1; }
+    {
+        fs::path pidFile = root / ".wandaa-serivisi.pid";
+        std::ofstream pf(pidFile);
+        if(pf){
+#ifdef _WIN32
+            pf << port << "\n" << _getpid() << "\n";
+#else
+            pf << port << "\n" << getpid() << "\n";
+#endif
+        }
+    }
+
+    std::cout << "serivisi itangiye kuri http://localhost:" << port
+              << "  (dosiye zikuwe muri: " << fs::absolute(root).string() << ")\n"
+              << "Ctrl+C kugira uhagarike.\n";
+
+    for(;;){
+        sockaddr_in client{};
+        socklen_t clientLen = sizeof(client);
+        socket_t conn = accept(srv, (sockaddr*)&client, &clientLen);
+        if(conn == INVALID_SOCK) continue;
+
+        char buf[8192] = {0};
+        int n =
+#ifdef _WIN32
+            recv(conn, buf, sizeof(buf) - 1, 0);
+#else
+            (int)recv(conn, buf, sizeof(buf) - 1, 0);
+#endif
+        std::string reqPath = "/";
+        if(n > 0){
+            std::string req(buf, n);
+            auto firstSpace = req.find(' ');
+            auto secondSpace = (firstSpace == std::string::npos) ? std::string::npos : req.find(' ', firstSpace + 1);
+            if(firstSpace != std::string::npos && secondSpace != std::string::npos)
+                reqPath = req.substr(firstSpace + 1, secondSpace - firstSpace - 1);
+        }
+        if(reqPath == "/" ) reqPath = "/index.html";
+
+        fs::path filePath = root / fs::path(reqPath.substr(1));
+        std::string body;
+        std::string status = "200 OK";
+        std::string ctype = "text/plain";
+
+        std::error_code ec;
+        auto canonicalRoot = fs::weakly_canonical(root, ec);
+        auto canonicalFile = fs::weakly_canonical(filePath, ec);
+
+        if(ec || canonicalFile.string().find(canonicalRoot.string()) != 0 || !fs::exists(filePath) || fs::is_directory(filePath)){
+            status = "404 Not Found";
+            body = "404 - ntibonetse: " + reqPath;
+            ctype = "text/plain";
+        } else {
+            std::ifstream f(filePath, std::ios::binary);
+            std::ostringstream ss; ss << f.rdbuf();
+            body = ss.str();
+            ctype = contentTypeFor(filePath);
+        }
+
+        std::ostringstream resp;
+        resp << "HTTP/1.1 " << status << "\r\n"
+             << "Content-Type: " << ctype << "\r\n"
+             << "Content-Length: " << body.size() << "\r\n"
+             << "Connection: close\r\n\r\n"
+             << body;
+        std::string respStr = resp.str();
+        send(conn, respStr.data(), (int)respStr.size(), 0);
+        closeSock(conn);
+    }
+}
+
+// ---------------------------------------------------------------------------
+//  hagarika -- stop a running serivisi by reading its PID file and killing it.
+// ---------------------------------------------------------------------------
+int cmdHagarika(const fs::path& dir){
+    fs::path pidFile = dir / ".wandaa-serivisi.pid";
+    if(!fs::exists(pidFile)){
+        std::cerr << "nta serivisi iri gukorera muri (no server running in): " << dir.string() << "\n";
+        return 1;
+    }
+    std::ifstream pf(pidFile);
+    int port = 0, pid = 0;
+    pf >> port >> pid;
+    if(pid <= 0){
+        std::cerr << "dosiye ya pid yangiritse (corrupt pid file)\n";
+        fs::remove(pidFile);
+        return 1;
+    }
+    std::string killCmd;
+#ifdef _WIN32
+    killCmd = "taskkill /F /PID " + std::to_string(pid) + " >nul 2>&1";
+#else
+    killCmd = "kill " + std::to_string(pid) + " >/dev/null 2>&1";
+#endif
+    int rc = std::system(killCmd.c_str());
+    fs::remove(pidFile);
+    if(rc == 0){
+        std::cout << "serivisi (pid " << pid << ", porto " << port << ") yahagaritswe (stopped)\n";
+    } else {
+        std::cout << "dosiye ya pid yasibwe; ariko ntibizwi niba process " << pid << " yari ikiriho\n";
+    }
+    return 0;
+}
+
 void usage(){
     std::cout <<
       "wandaa -- igikoresho cy'imishinga ya Wandaa\n"
@@ -514,6 +707,13 @@ void usage(){
       "  wandaa koresha [args...]        yubaka hanyuma ukoreshe (build and run)\n"
       "  wandaa gerageza                 koresha ibigeragezo (run tests)\n"
       "  wandaa verisiyo                 verisiyo (version)\n"
+      "  wandaa seriveri                 [ROADMAP Phase 4] server (not yet implemented)\n"
+      "  wandaa nyabubiko                [ROADMAP Phase 3] database (not yet implemented)\n"
+      "  wandaa ubwenge                  [ROADMAP Phase 5] AI/ML (not yet implemented)\n"
+      "  wandaa shyiraho <path> [ibirimo]   kora dosiye nshya (create file)\n"
+      "  wandaa hindura <path> <ibirimo>    ongeraho ibirimo ku dosiye (append to file)\n"
+      "  wandaa serivisi <porto> [ububiko]  tangiza seriveri ya HTTP (start HTTP server)\n"
+      "  wandaa hagarika [ububiko]          hagarika serivisi (stop HTTP server)\n"
       "\n"
       "WANDAAC       inzira ya wandaac (override the compiler path)\n"
       "WANDAA_RUNNER icyo gukoresha mu gukoresha .exe, urugero `wine`\n"
@@ -542,6 +742,47 @@ int main(int argc, char** argv){
         if(cmd == "koresha")  return cmdKoresha(rest);
         if(cmd == "gerageza") return cmdGerageza();
         if(cmd == "verisiyo"){ std::cout << "wandaa 0.2.0\n"; return 0; }
+        if(cmd == "seriveri"){
+            std::cout << "seriveri (server): ntiraboneka -- ROADMAP.md, Phase 4 (Web and servers)\n"
+                      << "Iki gikorwa gitegereje ibintu bibiri: ubwoko (records) na kwisukura kw ibibitswe (memory reclamation),\n"
+                      << "byombi biri muri Phase 1 kandi ntibiraheranwa.\n"
+                      << "(Not yet implemented -- blocked on records and memory reclamation, see ROADMAP.md Phase 1 and Phase 4.)\n";
+            return 1;
+        }
+        if(cmd == "nyabubiko"){
+            std::cout << "nyabubiko (database): ntiraboneka -- ROADMAP.md, Phase 3 (Data and databases)\n"
+                      << "SQLite driver yateganyijwe (Designed) ariko ntiyubatswe; itegereje records.\n"
+                      << "(Not yet implemented -- SQLite driver is Designed but not built, see ROADMAP.md Phase 3.)\n";
+            return 1;
+        }
+        if(cmd == "ubwenge"){
+            std::cout << "ubwenge (AI/ML): ntiraboneka -- ROADMAP.md, Phase 5 (AI and machine learning)\n"
+                      << "f64 floating point yarangiye (Done); ikibumbano (tensors) na ONNX Runtime biteganyijwe ariko ntibyubatswe.\n"
+                      << "(Not yet implemented -- f64 is Done, tensors/ONNX binding are Designed but not built, see ROADMAP.md Phase 5.)\n";
+            return 1;
+        }
+        if(cmd == "shyiraho"){
+            if(rest.empty()){ std::cerr << "gukoresha: wandaa shyiraho <path> [ibirimo...]\n"; return 1; }
+            std::string content;
+            for(size_t i=1;i<rest.size();++i){ if(i>1) content += " "; content += rest[i]; }
+            return cmdShyiraho(rest[0], content);
+        }
+        if(cmd == "hindura"){
+            if(rest.size() < 2){ std::cerr << "gukoresha: wandaa hindura <path> <ibirimo...>\n"; return 1; }
+            std::string content;
+            for(size_t i=1;i<rest.size();++i){ if(i>1) content += " "; content += rest[i]; }
+            return cmdHindura(rest[0], content);
+        }
+        if(cmd == "serivisi"){
+            if(rest.empty()){ std::cerr << "gukoresha: wandaa serivisi <porto> [ububiko]\n"; return 1; }
+            int port = std::atoi(rest[0].c_str());
+            fs::path dir = rest.size() > 1 ? fs::path(rest[1]) : fs::path(".");
+            return cmdServisi(port, dir);
+        }
+        if(cmd == "hagarika"){
+            fs::path dir = rest.empty() ? fs::path(".") : fs::path(rest[0]);
+            return cmdHagarika(dir);
+        }
         if(cmd == "-h" || cmd == "--help" || cmd == "ubufasha"){ usage(); return 0; }
 
         std::cerr << "itegeko ritazwi: " << cmd << "\n\n";

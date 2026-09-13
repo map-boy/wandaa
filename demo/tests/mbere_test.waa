@@ -1,0 +1,8 @@
+# Ibigeragezo bisohoka na 0 iyo byatsinze.
+# A test passes when the program exits 0.
+reka igisubizo = 2 + 2;
+niba (igisubizo != 4) {
+  andika("ikosa: 2 + 2 ntabwo ari 4");
+  tanga 1;
+}
+andika("byatsinze");
