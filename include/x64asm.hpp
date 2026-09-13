@@ -13,6 +13,12 @@ public:
     enum Reg { RAX=0, RCX=1, RDX=2, RBX=3, RSP=4, RBP=5, RSI=6, RDI=7,
                R8=8, R9=9, R10=10, R11=11, R12=12, R13=13, R14=14, R15=15 };
 
+    // SSE registers, kept a distinct type so an XMM index can never be passed
+    // where a general-purpose register is expected -- they share the same 0-15
+    // numbering and would otherwise encode silently as the wrong operand.
+    enum Xmm { XMM0=0, XMM1=1, XMM2=2,  XMM3=3,  XMM4=4,  XMM5=5,  XMM6=6,  XMM7=7,
+               XMM8=8, XMM9=9, XMM10=10, XMM11=11, XMM12=12, XMM13=13, XMM14=14, XMM15=15 };
+
     std::vector<uint8_t> code;
 
     // ---- labels & fixups (all resolved once at the very end) ----
@@ -93,13 +99,21 @@ public:
         emit(0xF7); emit(modrm(3, 3, r));
     }
 
-    // setcc al ; cc = "l","g","le","ge","e","ne"
+    // setcc al
+    //
+    // Signed conditions ("l","g","le","ge") are for integer cmp. UCOMISD sets
+    // CF/ZF rather than SF/OF, so float comparisons need the UNSIGNED forms
+    // ("b","a","be","ae") -- using "l" after a ucomisd silently compares the
+    // wrong flags.
     void setcc(const std::string& cc) {
         uint8_t op;
         if (cc=="l") op=0x9C; else if (cc=="g") op=0x9F;
         else if (cc=="le") op=0x9E; else if (cc=="ge") op=0x9D;
         else if (cc=="e") op=0x94; else if (cc=="ne") op=0x95;
-        else throw std::runtime_error("bad setcc");
+        else if (cc=="b") op=0x92; else if (cc=="a") op=0x97;
+        else if (cc=="be") op=0x96; else if (cc=="ae") op=0x93;
+        else if (cc=="p") op=0x9A; else if (cc=="np") op=0x9B;
+        else throw std::runtime_error("bad setcc: " + cc);
         emit(0x0F); emit(op); emit(0xC0);
     }
     void movzx_rax_al() { emit(0x48); emit(0x0F); emit(0xB6); emit(0xC0); }
@@ -180,7 +194,7 @@ public:
     // mov qword ptr [base + disp], imm32   REX.W C7 /0 id  (sign-extended)
     void mov_store_imm_base(Reg base, int32_t disp, int32_t imm) {
         emitRex(true, false, false, base>=8);
-        emit(0xC7); memBaseDisp(RAX /* /0 */, base, disp); emit32((uint32_t)imm);
+        emit(0xC7); memBaseDisp(0 /* /0 */, base, disp); emit32((uint32_t)imm);
     }
 
     // lea dst, [base + index*8]   REX.W 8D /r + SIB
@@ -220,6 +234,53 @@ public:
         emit32(0);
     }
 
+    // =======================================================================
+    //  SSE2 scalar double (f64).
+    //
+    //  Encoding shape for all of these:
+    //
+    //      [mandatory prefix] [REX] 0F <opcode> <modrm> ...
+    //
+    //  The prefix comes BEFORE the REX byte. Emitting REX first assembles to a
+    //  different instruction, and it is the single easiest mistake to make
+    //  here -- which is why every form below is covered in
+    //  tools/enc/verify_enc.cpp across XMM0-15 and diffed against GNU `as`.
+    // =======================================================================
+
+    // movsd xmm, xmm            F2 0F 10 /r
+    void movsd_rr(Xmm dst, Xmm src)            { sseRR(0xF2, false, 0x10, dst, src); }
+    // movsd xmm, qword ptr [base+disp]   F2 0F 10 /r
+    void movsd_load(Xmm dst, Reg base, int32_t disp) { sseRM(0xF2, false, 0x10, dst, base, disp); }
+    // movsd qword ptr [base+disp], xmm   F2 0F 11 /r
+    void movsd_store(Reg base, int32_t disp, Xmm src) { sseRM(0xF2, false, 0x11, src, base, disp); }
+
+    // Arithmetic: dst = dst op src
+    void addsd(Xmm dst, Xmm src) { sseRR(0xF2, false, 0x58, dst, src); }
+    void mulsd(Xmm dst, Xmm src) { sseRR(0xF2, false, 0x59, dst, src); }
+    void subsd(Xmm dst, Xmm src) { sseRR(0xF2, false, 0x5C, dst, src); }
+    void divsd(Xmm dst, Xmm src) { sseRR(0xF2, false, 0x5E, dst, src); }
+    void sqrtsd(Xmm dst, Xmm src){ sseRR(0xF2, false, 0x51, dst, src); }
+
+    // ucomisd xmm, xmm          66 0F 2E /r   (sets ZF/PF/CF, not SF/OF)
+    void ucomisd(Xmm a, Xmm b) { sseRR(0x66, false, 0x2E, a, b); }
+
+    // xorpd xmm, xmm            66 0F 57 /r   (zeroing, and sign flips)
+    void xorpd(Xmm dst, Xmm src) { sseRR(0x66, false, 0x57, dst, src); }
+
+    // cvtsi2sd xmm, r64         F2 REX.W 0F 2A /r   -- reg=xmm, rm=gpr
+    void cvtsi2sd(Xmm dst, Reg src) { sseRRmixed(0xF2, true, 0x2A, dst, src); }
+    // cvttsd2si r64, xmm        F2 REX.W 0F 2C /r   -- reg=gpr, rm=xmm
+    //                                                  (truncates toward zero)
+    void cvttsd2si(Reg dst, Xmm src) { sseRRmixed(0xF2, true, 0x2C, dst, src); }
+
+    // movq xmm, r64             66 REX.W 0F 6E /r   -- reg=xmm, rm=gpr
+    void movq_xmm_r64(Xmm dst, Reg src) { sseRRmixed(0x66, true, 0x6E, dst, src); }
+    // movq r64, xmm             66 REX.W 0F 7E /r   -- reg=xmm, rm=gpr
+    //
+    // Note the operand roles: even though the destination is the GPR, the xmm
+    // is still the ModRM.reg field. The direction lives in the opcode.
+    void movq_r64_xmm(Reg dst, Xmm src) { sseRRmixed(0x66, true, 0x7E, src, dst); }
+
     void ret() { emit(0xC3); }
 
 private:
@@ -241,13 +302,39 @@ private:
         emit((uint8_t)(0x40 | (W<<3) | (R<<2) | (X<<1) | B));
     }
 
+    // ---- SSE2 encoding helpers -------------------------------------------
+    //
+    // Order is mandatory-prefix, then REX, then 0F, then opcode. REX is only
+    // emitted when it carries a bit, exactly as for the integer forms.
+
+    // Both operands in the same register file (xmm/xmm).
+    void sseRR(uint8_t prefix, bool W, uint8_t op, int reg, int rm) {
+        emit(prefix);
+        emitRex(W, reg >= 8, false, rm >= 8);
+        emit(0x0F); emit(op); emit(modrm(3, reg, rm));
+    }
+
+    // Operands in different register files (xmm <-> gpr). Identical encoding;
+    // named separately so the call sites document which operand is which.
+    void sseRRmixed(uint8_t prefix, bool W, uint8_t op, int reg, int rm) {
+        sseRR(prefix, W, op, reg, rm);
+    }
+
+    // reg is an xmm index; the memory operand uses the ordinary ModRM path,
+    // so the RSP/R12 SIB and RBP/R13 mod=00 quirks are handled there.
+    void sseRM(uint8_t prefix, bool W, uint8_t op, int reg, Reg base, int32_t disp) {
+        emit(prefix);
+        emitRex(W, reg >= 8, false, base >= 8);
+        emit(0x0F); emit(op); memBaseDisp(reg, base, disp);
+    }
+
     // Encode ModRM (+SIB, +disp) for [base + disp], covering the two quirks
     // that make x86-64 addressing unforgiving:
     //   * RSP/R12 (rm & 7 == 4) cannot be a bare base -- a SIB byte with
     //     index=100b (none) is mandatory.
     //   * RBP/R13 (rm & 7 == 5) cannot use mod=00 -- that encoding means
     //     RIP-relative -- so a zero disp8 must be emitted instead.
-    void memBaseDisp(Reg reg, Reg base, int32_t disp) {
+    void memBaseDisp(int reg, Reg base, int32_t disp) {
         const bool needSib  = ((base & 7) == 4);
         const bool baseIsBp = ((base & 7) == 5);
         int mod;
@@ -262,7 +349,7 @@ private:
     }
 
     // Encode ModRM+SIB for [base + index*8]. Same RBP/R13 mod=00 restriction.
-    void memSib(Reg reg, Reg base, Reg index) {
+    void memSib(int reg, Reg base, Reg index) {
         const bool baseIsBp = ((base & 7) == 5);
         const int mod = baseIsBp ? 1 : 0;
         emit(modrm(mod, reg, 4));
