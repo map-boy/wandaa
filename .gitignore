@@ -17,3 +17,5 @@
 /tests/_work/
 
 .guard/hook_output.log
+
+*.bak
