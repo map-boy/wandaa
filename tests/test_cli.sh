@@ -15,10 +15,21 @@ export WANDAAC="${WANDAAC:-$ROOT/wandaac}"
 [ -x "$WANDAA" ]  || { echo "not built: $WANDAA (run ./build.sh)"; exit 1; }
 [ -x "$WANDAAC" ] || { echo "not built: $WANDAAC (run ./build.sh)"; exit 1; }
 
-if command -v wine >/dev/null && [ "$(uname -s)" != "MINGW"* ]; then
-    export WANDAA_RUNNER="${WANDAA_RUNNER:-wine}"
-    export WINEDEBUG=-all
-fi
+# A produced .exe runs natively on Windows; elsewhere it needs Wine.
+# `[ "$x" != "MINGW"* ]` does NOT do this -- the glob is a separate argument to
+# [ and the comparison stays true under Git Bash -- so match with `case`.
+case "$(uname -s)" in
+    MINGW*|MSYS*|CYGWIN*) ;;                       # Windows: run the exe directly
+    *)
+        if command -v wine >/dev/null 2>&1; then
+            export WANDAA_RUNNER="${WANDAA_RUNNER:-wine}"
+            export WINEDEBUG=-all
+        else
+            echo "wine not found; cannot run Windows executables on $(uname -s)"
+            exit 1
+        fi
+        ;;
+esac
 
 W="$(mktemp -d)"; trap 'rm -rf "$W"' EXIT
 fail=0

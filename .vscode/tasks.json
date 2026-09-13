@@ -1,12 +1,30 @@
-﻿{
+{
   "version": "2.0.0",
   "tasks": [
     {
-      "label": "Build and Run Wandaa file",
+      "label": "Wandaa: build and run this file",
+      "detail": "Builds wandaac.exe if needed, compiles the open .waa file, and runs it.",
       "type": "shell",
       "command": "powershell",
-      "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "${workspaceFolder}\wandaa.ps1", "${file}"],
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy", "Bypass",
+        "-File", "${workspaceFolder}/build.ps1",
+        "${file}"
+      ],
       "group": { "kind": "build", "isDefault": true },
+      "problemMatcher": []
+    },
+    {
+      "label": "Wandaa: run the test suite",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy", "Bypass",
+        "-File", "${workspaceFolder}/tests/run_tests.ps1"
+      ],
+      "group": { "kind": "test", "isDefault": true },
       "problemMatcher": []
     }
   ]
