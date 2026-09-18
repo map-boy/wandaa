@@ -354,6 +354,181 @@ void inferPass(const NodePtr& n, std::unordered_map<std::string,VType>& types,
 }
 
 // ===========================================================================
+//  Semantic checks
+//
+//  A separate pass that runs before any code is emitted, so a bad program is
+//  rejected with a source line instead of producing an executable that prints
+//  a pointer. Unknown names were already caught (curOffset and the label
+//  resolver throw); what was missing is everything about SHAPE: calling a
+//  function with the wrong number of arguments, naming a field that does not
+//  exist, or doing arithmetic on a string.
+//
+//  The rule for what to reject: only what is DEFINITELY wrong. Type inference
+//  falls back to Int for anything it cannot work out, so rejecting on "Int
+//  where Str expected" would reject correct programs. Rejecting a string in a
+//  multiplication is safe, because Str is only ever inferred when it is known.
+// ===========================================================================
+
+struct Checker {
+  std::unordered_map<std::string,size_t> fnArity;      // user functions
+  std::unordered_map<std::string,size_t> externArity;  // hanze declarations
+  std::vector<std::string> errors;
+
+  // Builtin name -> exact argument count.
+  static const std::unordered_map<std::string,size_t>& builtinArity(){
+    static const std::unordered_map<std::string,size_t> m = {
+      {"uburebure",1},{"ubunini",1},{"soma",1},{"andikamo",2},{"ongeramo",2},
+      {"ijambo",1},{"inyuguti",2},{"igice",3},{"mu_ijambo",1},{"mu_mubare",1},
+      {"urutonde",1},{"mu_bice",1},{"mu_mubare_wuzuye",1}
+    };
+    return m;
+  }
+
+  void err(const NodePtr& n, const std::string& msg){
+    const std::string where = n && n->line > 0
+      ? " ku murongo " + std::to_string(n->line) : "";
+    errors.push_back(msg + where);
+  }
+
+  static std::string typeName(VType t){
+    switch(t){
+      case VType::Str:    return "ijambo";
+      case VType::Arr:    return "urutonde";
+      case VType::Float:  return "umubare w'ibice";
+      case VType::Record: return "ubwoko";
+      default:            return "umubare";
+    }
+  }
+
+  void collect(const NodePtr& n){
+    if(!n) return;
+    if(n->type == NT::FuncDecl)   fnArity[n->sval]     = n->params.size();
+    if(n->type == NT::ExternDecl) externArity[n->sval] = n->params.size();
+    for(auto& k : n->kids) collect(k);
+  }
+
+  void walk(const NodePtr& n, const std::unordered_map<std::string,VType>& types){
+    if(!n) return;
+
+    switch(n->type){
+      case NT::RecordLit: {
+        // A record literal is its own node type, so it needs the same arity
+        // check as a call -- `S(1)` on a two-field record left the second
+        // field reading whatever HeapAlloc handed back.
+        auto rit = g_recordTypes.find(n->sval);
+        if(rit != g_recordTypes.end()){
+          const size_t want = rit->second.fieldNames.size();
+          if(n->kids.size() != want)
+            err(n, "ubwoko '" + n->sval + "' busaba imyanya " + std::to_string(want) +
+                   ", bwahawe " + std::to_string(n->kids.size()));
+        }
+        break;
+      }
+
+      case NT::Call: {
+        const std::string& name = n->sval;
+        const size_t given = n->kids.size();
+        size_t want = given;
+        bool known = false;
+
+        auto bi = builtinArity().find(name);
+        auto fi = fnArity.find(name);
+        auto ei = externArity.find(name);
+        auto ri = g_recordTypes.find(name);
+        if(bi != builtinArity().end()){ want = bi->second; known = true; }
+        else if(fi != fnArity.end())  { want = fi->second; known = true; }
+        else if(ei != externArity.end()){ want = ei->second; known = true; }
+        else if(ri != g_recordTypes.end()){ want = ri->second.fieldNames.size(); known = true; }
+
+        if(known && given != want)
+          err(n, "umurimo '" + name + "' usaba ibipimo " + std::to_string(want) +
+                 ", wahawe " + std::to_string(given));
+        break;
+      }
+
+      case NT::FieldAccess: case NT::FieldAssign: {
+        const std::string tname = recordTypeNameOf(n->kids[0]);
+        if(!tname.empty()){
+          auto rit = g_recordTypes.find(tname);
+          if(rit != g_recordTypes.end() && !rit->second.fieldOffset.count(n->sval))
+            err(n, "ubwoko '" + tname + "' nta mwanya ufite witwa '" + n->sval + "'");
+        }
+        break;
+      }
+
+      case NT::Bin: {
+        const std::string& op = n->sval;
+        const VType lt = evalType(n->kids[0], types);
+        const VType rt = evalType(n->kids[1], types);
+
+        // Strings support + (concatenation) and == / != only.
+        const bool arith = (op=="-" || op=="*" || op=="/");
+        if(arith && (lt==VType::Str || rt==VType::Str))
+          err(n, "ntibishoboka gukoresha '" + op + "' ku ijambo");
+
+        // `+` joins two strings or adds two numbers. One of each adds the
+        // pointer to the number and prints nonsense.
+        //
+        // Only flagged when the non-string side is CERTAIN: a numeric literal,
+        // or a float/array/record. Int is also the fallback for anything
+        // inference could not resolve, so treating every Int as definitely-not
+        // a string would reject correct programs.
+        if(op=="+" && ((lt==VType::Str) != (rt==VType::Str))){
+          const NodePtr& other = (lt==VType::Str) ? n->kids[1] : n->kids[0];
+          const VType ot = (lt==VType::Str) ? rt : lt;
+          const bool certain = (other->type == NT::Num)
+                            || ot == VType::Float || ot == VType::Arr || ot == VType::Record;
+          if(certain)
+            err(n, "ntibishoboka guteranya " + typeName(lt) + " na " + typeName(rt) +
+                   " -- koresha mu_ijambo() kugira ngo uhindure umubare mu ijambo");
+        }
+        break;
+      }
+
+      default: break;
+    }
+
+    for(auto& k : n->kids) walk(k, types);
+  }
+};
+
+void checkProgram(const NodePtr& program,
+                  const std::unordered_map<std::string,std::vector<VType>>& fnParamTypes){
+  Checker c;
+  c.collect(program);
+
+  std::unordered_map<std::string,VType> topTypes;
+  collectTypesRec(program, topTypes);
+  c.walk(program, topTypes);
+
+  // Each function body is checked with its parameters bound to their INFERRED
+  // types, mirroring genFunction exactly. Defaulting them to Int instead would
+  // make `tanga "mwiriwe " + izina` look like string-plus-number for every
+  // function that takes a string.
+  for(auto& k : program->kids){
+    if(k->type != NT::FuncDecl) continue;
+    std::unordered_map<std::string,VType> fnTypes;
+    auto pit = fnParamTypes.find(k->sval);
+    for(size_t i=0;i<k->params.size();++i){
+      const VType pt = (pit != fnParamTypes.end() && i < pit->second.size())
+                       ? pit->second[i] : VType::Int;
+      fnTypes[k->params[i]] = pt;
+    }
+    collectTypesRec(k->kids[0], fnTypes);
+    c.walk(k->kids[0], fnTypes);
+  }
+
+  if(!c.errors.empty()){
+    std::string all;
+    for(size_t i=0;i<c.errors.size();++i){
+      if(i) all += "\n";
+      all += c.errors[i];
+    }
+    throw std::runtime_error(all);
+  }
+}
+
+// ===========================================================================
 //  Emission
 // ===========================================================================
 
@@ -1093,6 +1268,12 @@ struct Codegen {
           g_fnReturnTypes[f->sval] = rt;
       }
     }
+
+    // --- 0. semantic checks -----------------------------------------------
+    // Runs after inference (so types are known) but before a single byte is
+    // emitted, so a bad program fails with a source line instead of building
+    // an executable that prints a pointer.
+    checkProgram(program, fnParamTypes);
 
     // --- 1. imports -------------------------------------------------------
     // Every function the runtime blob calls, plus the two the generated code
