@@ -297,6 +297,12 @@ int main(int argc, char** argv) {
     h.a.defineLabel("Lfwd");
     h.note("ret");             h.a.ret();
 
+    // ---- call r64 : indirect, all 16 registers (REX.B boundary at r8) ----
+    for (int r = 0; r < 16; ++r) {
+        h.note(std::string("call ") + RN[r]);
+        h.a.call_reg(R(r));
+    }
+
     h.a.resolveFixups();
 
     if (mode == "--asm") {

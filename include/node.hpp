@@ -8,7 +8,8 @@ enum class NT {
   Block, If, While, FuncDecl, Return, Print, ExprStmt, Program,
   ArrayLit, Index, IndexAssign, ExternDecl, Break, Continue,
   RecordDecl, RecordLit, FieldAccess, FieldAssign, AddrOf,
-  Try                       // postfix `?` -- unwrap a result or propagate its error
+  Try,                      // postfix `?` -- unwrap a result or propagate its error
+  Lambda                    // anonymous `umurimo (...) { ... }`, capturing by value
 };
 
 struct Node;

@@ -165,6 +165,15 @@ public:
     void jb(const std::string& label)   { emit(0x0F); emit(0x82); fixups_.push_back({code.size(), label, 0}); emit32(0); }
     void call_label(const std::string& label) { emit(0xE8); fixups_.push_back({code.size(), label, 0}); emit32(0); }
 
+    // call r64 -- an INDIRECT call, needed to call a closure whose code
+    // pointer is only known at runtime. No REX.W: a near call is already
+    // 64-bit in long mode, so the only REX bit that can appear is B, for
+    // r8-r15. `call rax` is FF D0; `call r15` is 41 FF D7.
+    void call_reg(Reg target) {
+        emitRex(false, false, false, target>=8);
+        emit(0xFF); emit(modrm(3, 2, target));
+    }
+
     // =======================================================================
     //  Additional forms required by the direct-to-PE backend.
     //

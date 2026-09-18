@@ -1,0 +1,63 @@
+# Umurimo utagira izina -- an anonymous function. It captures the enclosing
+# variables it uses BY VALUE, at the moment it is created.
+reka kubyaza = umurimo(x) { tanga x * x; };
+andika(kubyaza(7));
+
+reka n = 10;
+reka ongeraho = umurimo(x) { tanga x + n; };
+andika(ongeraho(5));
+
+# Capture is by value, so changing n afterwards does not change the closure.
+n = 99;
+andika(ongeraho(5));
+
+# A captured string stays a string rather than reading back as a pointer.
+reka mbere = "mwiriwe ";
+reka indamukanyo = umurimo(izina) { tanga mbere + izina; };
+andika(indamukanyo("Wandaa"));
+
+# Closures are ordinary values: they go into arrays, into other functions,
+# and come back out of them.
+umurimo koresha(g, v) { tanga g(v); }
+andika(koresha(kubyaza, 9));
+
+reka imirimo = [umurimo(x){ tanga x + 1; }, umurimo(x){ tanga x + 2; }];
+reka mbereza = imirimo[0];
+reka ikurikira = imirimo[1];
+andika(mbereza(10));
+andika(ikurikira(10));
+
+# A function returning a closure: each call captures its own copy.
+umurimo gukuba(k) { tanga umurimo(x) { tanga x * k; }; }
+reka kabiri = gukuba(2);
+reka gatatu = gukuba(3);
+andika(kabiri(21));
+andika(gatatu(14));
+
+# The captured value keeps its type across that boundary too.
+umurimo kwuzuza(p) { tanga umurimo(s) { tanga p + s; }; }
+reka mu_mahoro = kwuzuza("amahoro ");
+andika(mu_mahoro("kuri bose"));
+
+# Three levels, each capturing from the one above it.
+umurimo hejuru(a) { tanga umurimo(b) { tanga umurimo(c) { tanga a + b + c; }; }; }
+reka f1 = hejuru(100);
+reka f2 = f1(20);
+andika(f2(3));
+
+# A closure can return a result, and `?` works through it.
+reka kugabanya = umurimo(a, b) {
+  niba (b == 0) { tanga byanze("na zeru"); }
+  tanga byakunze(a / b);
+};
+andika(agaciro(kugabanya(20, 5)));
+andika(ikosa(kugabanya(20, 0)));
+
+# Six arguments, so some travel on the stack rather than in registers --
+# the closure block is a hidden extra argument ahead of all of them.
+reka byose = umurimo(a, b, c, d, e, f) { tanga a + b + c + d + e + f; };
+andika(byose(1, 2, 3, 4, 5, 6));
+
+# A float argument travels in the other register file.
+reka kabiri_bice = umurimo(x) { tanga x * 2.0; };
+andika(kabiri_bice(1.25));

@@ -42,6 +42,7 @@
 
 #include <cstring>
 #include <fstream>
+#include <set>
 #include <map>
 #include <stdexcept>
 #include <string>
@@ -70,6 +71,29 @@ std::unordered_map<std::string,VType> g_arrElemTypes;
 // records Str against r, so `agaciro(r)` and `r?` come back as a string rather
 // than as the pointer's numeric value. Keyed by variable and by function,
 // mirroring g_arrElemTypes / g_fnArrElemTypes.
+// Closures. The lifting pass gives every anonymous `umurimo` a top-level name
+// and works out which enclosing variables it uses; both maps are keyed by that
+// generated name. g_declaredFns is every NAMED function in the program, which
+// free-variable analysis needs in order to tell `f(1)` calling a declared
+// function from `f(1)` calling a closure held in a variable.
+std::unordered_map<std::string,std::vector<std::string>> g_lambdaCaptures;
+// What TYPE each captured variable had in the enclosing scope. Without this a
+// captured string is read back inside the lambda as a plain Int and prints as
+// a pointer: the lifted body is typed on its own, and nothing in it says where
+// those values came from. Recorded by inferPass at the site of the lambda,
+// where the enclosing scope's types are in hand.
+std::unordered_map<std::string,std::unordered_map<std::string,VType>> g_lambdaCaptureTypes;
+std::set<std::string> g_declaredFns;
+// Which lifted function a variable holds, for `reka f = umurimo(...) { ... };`.
+// Without it a call through f has no return type and andika(f()) prints a
+// string payload as a pointer.
+std::unordered_map<std::string,std::string> g_varLambda;
+// Which lifted function a NAMED function hands back, for
+// `umurimo mk(p){ tanga umurimo(s){ ... }; }`. It carries the closure's
+// identity across the return boundary, the same job g_fnArrElemTypes does for
+// an array's element type.
+std::unordered_map<std::string,std::string> g_fnLambda;
+
 std::unordered_map<std::string,VType> g_resultPayload;     // variable -> payload
 std::unordered_map<std::string,VType> g_fnResultPayload;   // function -> payload
 
@@ -112,13 +136,23 @@ void collectNames(const NodePtr& n, std::vector<std::string>& out){
   if(!n) return;
   if(n->type==NT::VarDecl) out.push_back(n->sval);
   if(n->type==NT::FuncDecl) return;
+  // A lambda body's locals live in ITS frame, not this one. Without this the
+  // enclosing function reserves slots for names it never uses, and worse, a
+  // name declared in both frames would collide.
+  if(n->type==NT::Lambda) return;
   for(auto& k : n->kids) collectNames(k, out);
 }
 
-FnInfo buildFnInfo(const std::vector<std::string>& params, const NodePtr& body){
+FnInfo buildFnInfo(const std::vector<std::string>& params, const NodePtr& body,
+                   const std::vector<std::string>* extraLocals = nullptr){
   FnInfo fi;
   int off = 8;
   for(auto& p : params){ fi.offset[p] = off; off += 8; }
+  // Captured variables are copied out of the closure block into ordinary frame
+  // slots in the prologue, so from there on the rest of codegen treats them as
+  // plain locals and needs to know nothing about closures.
+  if(extraLocals)
+    for(auto& e : *extraLocals) if(!fi.offset.count(e)){ fi.offset[e] = off; off += 8; }
   std::vector<std::string> locals;
   collectNames(body, locals);
   for(auto& l : locals) if(!fi.offset.count(l)){ fi.offset[l] = off; off += 8; }
@@ -206,6 +240,13 @@ VType evalType(const NodePtr& n, const std::unordered_map<std::string,VType>& ty
     }
     case NT::Assign: return evalType(n->kids[0], types);
     case NT::Call: {
+      // A call through a variable holding a closure returns whatever the
+      // lifted function returns.
+      auto lv = g_varLambda.find(n->sval);
+      if(lv != g_varLambda.end()){
+        auto rt = g_fnReturnTypes.find(lv->second);
+        if(rt != g_fnReturnTypes.end()) return rt->second;
+      }
       auto it = g_fnReturnTypes.find(n->sval);
       if(it != g_fnReturnTypes.end()) return it->second;
       static const std::unordered_map<std::string,VType> builtinReturnTypes = {
@@ -299,6 +340,13 @@ void collectTypesRec(const NodePtr& n, std::unordered_map<std::string,VType>& ty
     std::unordered_map<std::string,VType> localTypes;
     for(auto& k : n->kids) collectTypesRec(k, localTypes);
     findArrayReturnType(n, n->sval);
+    return;
+  }
+  if(n->type==NT::Lambda){
+    // Same reasoning as FuncDecl above: separate scope, but still walked so
+    // the global side maps (array element types, record types) get filled.
+    std::unordered_map<std::string,VType> localTypes;
+    for(auto& k : n->kids) collectTypesRec(k, localTypes);
     return;
   }
   if(n->type==NT::VarDecl){
@@ -395,22 +443,182 @@ void inferPass(const NodePtr& n, std::unordered_map<std::string,VType>& types,
     return;
   }
   if(n->type==NT::Call){
-    auto& vec = fnParamTypes[n->sval];
-    if(vec.size() < n->kids.size()) vec.resize(n->kids.size(), VType::Int);
+    // A call through a variable holding a closure teaches the LIFTED function
+    // about its parameters, not the variable. The lifted function takes the
+    // closure block as a hidden first argument, so user parameter i is its
+    // parameter i+1.
+    std::string key = n->sval;
+    size_t shift = 0;
+    auto lv = g_varLambda.find(n->sval);
+    if(lv != g_varLambda.end()){ key = lv->second; shift = 1; }
+
+    auto& vec = fnParamTypes[key];
+    if(vec.size() < n->kids.size() + shift) vec.resize(n->kids.size() + shift, VType::Int);
     for(size_t i=0;i<n->kids.size();++i){
       inferPass(n->kids[i], types, fnParamTypes);
       const VType at = evalType(n->kids[i], types);
       // A parameter is Str or Float if ANY call site passes one. Both are
       // sticky: the callee reads that parameter out of one register file, and
       // every caller has to agree, so the widest observed type wins.
-      if(at == VType::Str)        vec[i] = VType::Str;
-      else if(at == VType::Float && vec[i] != VType::Str) vec[i] = VType::Float;
+      if(at == VType::Str)        vec[i+shift] = VType::Str;
+      else if(at == VType::Float && vec[i+shift] != VType::Str) vec[i+shift] = VType::Float;
+    }
+    return;
+  }
+  if(n->type==NT::Lambda){
+    // The body is inferred separately, as the lifted function. What only THIS
+    // point knows is what the captured names meant out here.
+    auto cit = g_lambdaCaptures.find(n->sval);
+    if(cit != g_lambdaCaptures.end()){
+      auto& rec = g_lambdaCaptureTypes[n->sval];
+      for(const auto& cap : cit->second){
+        auto t = types.find(cap);
+        if(t != types.end() && t->second != VType::Int) rec[cap] = t->second;
+      }
     }
     return;
   }
   if(n->type==NT::Assign){ inferPass(n->kids[0], types, fnParamTypes); return; }
   noteIndexedWrite(n, types);
   for(auto& k : n->kids) inferPass(k, types, fnParamTypes);
+}
+
+// ===========================================================================
+//  Closure lifting
+//
+//  An anonymous `umurimo` becomes an ordinary top-level function plus a heap
+//  block holding its code pointer and a copy of every enclosing variable it
+//  uses. The block is laid out like an array, the same shape everything else
+//  in this language uses:
+//
+//      [P-8] = 1 + ncaptures     the element count
+//      [P+0] = code pointer
+//      [P+8 + 8*i] = capture i
+//
+//  The lifted function takes the block as a hidden FIRST argument and copies
+//  the captures into ordinary frame slots in its prologue. After that the rest
+//  of codegen treats them as plain locals and knows nothing about closures.
+//
+//  Capture is BY VALUE, at the moment the closure is created. That is a real
+//  language decision, not a shortcut: without it a closure outliving its
+//  enclosing call would read a dead frame, and there is no reference counting
+//  yet to keep a shared cell alive. It is also the rule that is easiest to
+//  explain, which for this language counts.
+// ===========================================================================
+
+struct Lifted { std::string name; std::vector<std::string> params; NodePtr body; };
+std::vector<Lifted> g_lifted;
+int g_lambdaCounter = 0;
+
+// Every name a Call node can refer to that is NOT a variable holding a
+// closure: declared functions, foreign declarations, record constructors and
+// builtins. Whatever is left over must be a closure call.
+void collectCallableNames(const NodePtr& n, std::set<std::string>& out){
+  if(!n) return;
+  if(n->type==NT::FuncDecl || n->type==NT::ExternDecl || n->type==NT::RecordDecl)
+    out.insert(n->sval);
+  for(auto& k : n->kids) collectCallableNames(k, out);
+}
+
+// Names used but not bound here. Descends into a nested lambda, adding ITS
+// parameters and locals to the bound set for that subtree -- so a variable the
+// inner lambda needs is captured by the outer one too, and reaches the inner
+// through the outer's frame.
+void usesRec(const NodePtr& n, std::set<std::string> bound,
+             const std::set<std::string>& callables,
+             std::vector<std::string>& out, std::set<std::string>& seen){
+  if(!n) return;
+  if(n->type==NT::FuncDecl) return;              // a named function has its own scope
+  if(n->type==NT::Lambda){
+    bound.insert(n->params.begin(), n->params.end());
+    std::vector<std::string> inner;
+    collectNames(n->kids[0], inner);
+    bound.insert(inner.begin(), inner.end());
+    usesRec(n->kids[0], bound, callables, out, seen);
+    return;
+  }
+  auto use = [&](const std::string& nm){
+    if(bound.count(nm) || callables.count(nm) || seen.count(nm)) return;
+    seen.insert(nm);
+    out.push_back(nm);
+  };
+  if(n->type==NT::Var)    use(n->sval);
+  if(n->type==NT::Assign) use(n->sval);          // the target name lives in sval
+  if(n->type==NT::Call)   use(n->sval);          // a callable is filtered out above
+  for(auto& k : n->kids) usesRec(k, bound, callables, out, seen);
+}
+
+// Which variables hold which lifted function. Run after liftLambdas, once the
+// generated names exist.
+// `tanga umurimo(...) { ... };` inside fnName -- that function yields a closure.
+void noteFnLambda(const NodePtr& n, const std::string& fnName){
+  if(!n) return;
+  if(n->type==NT::Return && !n->kids.empty() && n->kids[0]->type==NT::Lambda)
+    g_fnLambda[fnName] = n->kids[0]->sval;
+  for(auto& k : n->kids) noteFnLambda(k, fnName);
+}
+
+void noteLambdaVars(const NodePtr& n){
+  if(!n) return;
+  if((n->type==NT::VarDecl || n->type==NT::Assign) && !n->kids.empty()){
+    if(n->kids[0]->type==NT::Lambda)
+      g_varLambda[n->sval] = n->kids[0]->sval;
+    else if(n->kids[0]->type==NT::Call){
+      // `reka f = mk("mwiriwe ");` where mk returns a closure.
+      auto it = g_fnLambda.find(n->kids[0]->sval);
+      if(it != g_fnLambda.end()) g_varLambda[n->sval] = it->second;
+    }
+  }
+  for(auto& k : n->kids) noteLambdaVars(k);
+}
+
+// `reka f = umurimo(n){ ... f(n-1) ... };` captures f BEFORE the declaration
+// binds it, so the closure holds an unset slot and calling it jumps through
+// garbage. That crashed with only a line number, which is no help at all, so
+// it is rejected here with the fix in the message.
+void checkSelfCapture(const NodePtr& n){
+  if(!n) return;
+  if(n->type==NT::VarDecl && !n->kids.empty() && n->kids[0]->type==NT::Lambda){
+    auto it = g_lambdaCaptures.find(n->kids[0]->sval);
+    if(it != g_lambdaCaptures.end())
+      for(const auto& c : it->second)
+        if(c == n->sval)
+          throw std::runtime_error(
+            "umurimo utagira izina ntushobora kwihamagara ('" + n->sval +
+            "') ku murongo " + std::to_string(n->line) +
+            ". Koresha umurimo ufite izina: 'umurimo " + n->sval + "(...) { ... }'");
+  }
+  for(auto& k : n->kids) checkSelfCapture(k);
+}
+
+void liftLambdas(const NodePtr& n, const std::set<std::string>& callables){
+  if(!n) return;
+  if(n->type==NT::Lambda){
+    const std::string nm = "__umurimo_" + std::to_string(g_lambdaCounter++);
+    n->sval = nm;                                // genLambda reads the label back
+
+    // Locals are function-scoped here -- buildFnInfo puts every VarDecl in the
+    // body into one frame -- so the bound set is the parameters plus all of
+    // them, and anything else the body mentions is captured.
+    std::set<std::string> bound(n->params.begin(), n->params.end());
+    std::vector<std::string> locals;
+    collectNames(n->kids[0], locals);
+    bound.insert(locals.begin(), locals.end());
+
+    std::vector<std::string> caps;
+    std::set<std::string> seen;
+    usesRec(n->kids[0], bound, callables, caps, seen);
+    g_lambdaCaptures[nm] = caps;
+
+    std::vector<std::string> ps;
+    ps.push_back("__ctx");                       // the hidden first argument
+    for(auto& p : n->params) ps.push_back(p);
+    g_lifted.push_back({nm, ps, n->kids[0]});
+
+    liftLambdas(n->kids[0], callables);          // nested lambdas lift too
+    return;
+  }
+  for(auto& k : n->kids) liftLambdas(k, callables);
 }
 
 // ===========================================================================
@@ -615,6 +823,8 @@ struct Codegen {
   int labelCounter = 0;
   std::string epilogue;
   std::string curFnName;
+  // Every name a Call can refer to that is NOT a closure held in a variable.
+  std::set<std::string> callables;
   std::unordered_map<std::string,std::vector<VType>> fnParamTypes;
 
   size_t blobBase = 0, codeBase = 0;
@@ -709,8 +919,10 @@ struct Codegen {
   // evaluation order (which matters when arguments have side effects), needs no
   // shuffling for arguments five and up, and keeps RSP aligned throughout
   // because a single aligned amount is reserved before any of it runs.
+  // `indirect` means argument 0 is a closure block and the call goes through
+  // the code pointer in its first slot, rather than to a known label.
   void emitCall(const std::string& target, const std::vector<NodePtr>& args, bool isImport,
-                const std::vector<VType>* paramTypes = nullptr){
+                const std::vector<VType>* paramTypes = nullptr, bool indirect = false){
     const int n = (int)args.size();
     const int homeSlots = (n > 4 ? n : 4);            // shadow space is always 4
     const int pad = ((homeSlots + stackSlots) % 2) ? 8 : 0;
@@ -749,8 +961,15 @@ struct Codegen {
       else                  a.mov_load_base(ARG_REGS[i], X64Asm::RSP, i * 8);
     }
 
-    if(isImport) a.call_mem_rip("__imp_" + target);
-    else         a.call_label(target);
+    if(indirect){
+      // RAX is volatile and never an argument register, so it is free here --
+      // after the four argument registers have already been loaded.
+      a.mov_load_base(X64Asm::RAX, X64Asm::RSP, 0);   // argument 0: the closure
+      a.mov_load_base(X64Asm::RAX, X64Asm::RAX, 0);   // its code pointer
+      a.call_reg(X64Asm::RAX);
+    }
+    else if(isImport) a.call_mem_rip("__imp_" + target);
+    else              a.call_label(target);
 
     stackSlots = savedSlots;
     a.add_imm(X64Asm::RSP, reserve);
@@ -781,6 +1000,29 @@ struct Codegen {
       // The old backend always emitted a disp8 here, which silently truncated
       // past 15 elements. mov_store_base picks disp8/disp32 correctly.
       a.mov_store_base(X64Asm::R12, (int32_t)(8 + i*8), X64Asm::RAX);
+    }
+    a.lea_base(X64Asm::RAX, X64Asm::R12, 8);
+  }
+
+  // Build the closure block: the code pointer, then a copy of each captured
+  // variable read out of the CURRENT frame. Nothing here runs nested codegen
+  // between the allocation and the stores -- captures are plain frame loads --
+  // so R12 needs no saving, unlike genArrayLit.
+  void genLambda(const NodePtr& n){
+    const auto& caps = g_lambdaCaptures.at(n->sval);
+    const size_t count = 1 + caps.size();
+    callImport("GetProcessHeap");
+    a.mov_reg(X64Asm::RCX, X64Asm::RAX);
+    a.xorr(X64Asm::RDX, X64Asm::RDX);
+    a.mov_imm(X64Asm::R8, (int64_t)(8 + count*8));
+    callImport("HeapAlloc");
+    a.mov_reg(X64Asm::R12, X64Asm::RAX);
+    a.mov_store_imm_base(X64Asm::R12, 0, (int32_t)count);
+    a.lea_rip(X64Asm::RAX, n->sval);                    // the lifted function
+    a.mov_store_base(X64Asm::R12, 8, X64Asm::RAX);
+    for(size_t i=0;i<caps.size();++i){
+      a.mov_load_rbp(X64Asm::RAX, -curOffset(caps[i]));
+      a.mov_store_base(X64Asm::R12, (int32_t)(16 + 8*i), X64Asm::RAX);
     }
     a.lea_base(X64Asm::RAX, X64Asm::R12, 8);
   }
@@ -1191,7 +1433,8 @@ struct Codegen {
         break;
       }
       case NT::Call: genCall(n); break;
-      case NT::Try:  genTry(n); break;
+      case NT::Try:    genTry(n); break;
+      case NT::Lambda: genLambda(n); break;
       default: throw std::runtime_error("iyi expression ntiyemewe muri codegen");
     }
   }
@@ -1213,6 +1456,28 @@ struct Codegen {
       {"mu_mubare", "wandaa_str_to_int"},  // string -> number
       {"urutonde",  "wandaa_array_new"}    // zero-filled array of n elements
     };
+    // A name that is a variable in this frame rather than a declared function
+    // is a closure. The closure block travels as a hidden first argument, so
+    // the lifted body can read its captures out of it.
+    if(!callables.count(n->sval) && cur && cur->offset.count(n->sval)){
+      std::vector<NodePtr> args;
+      auto ctx = std::make_shared<Node>();
+      ctx->type = NT::Var; ctx->sval = n->sval; ctx->line = n->line;
+      args.push_back(ctx);
+      for(auto& k : n->kids) args.push_back(k);
+      // Pass the lifted function's parameter types when they are known, so a
+      // float argument is coerced and travels in XMM as the callee expects.
+      // Indices line up: args[0] is the context, and so is parameter 0.
+      const std::vector<VType>* pt = nullptr;
+      auto lv = g_varLambda.find(n->sval);
+      if(lv != g_varLambda.end()){
+        auto f = fnParamTypes.find(lv->second);
+        if(f != fnParamTypes.end()) pt = &f->second;
+      }
+      emitCall(n->sval, args, false, pt, true);
+      return;
+    }
+
     // The result builtins are emitted inline: each is a handful of
     // instructions over the two-slot block, with no runtime routine to call
     // except the two traps.
@@ -1336,7 +1601,18 @@ struct Codegen {
   }
 
   void genFunction(const std::string& name, const std::vector<std::string>& params, const NodePtr& body){
-    FnInfo fi = buildFnInfo(params, body);
+    // A lifted lambda body: its captures need frame slots of their own, filled
+    // from the closure block in the prologue.
+    auto capIt = g_lambdaCaptures.find(name);
+    const std::vector<std::string>* caps =
+        (capIt != g_lambdaCaptures.end()) ? &capIt->second : nullptr;
+
+    FnInfo fi = buildFnInfo(params, body, caps);
+    if(caps){
+      auto tit = g_lambdaCaptureTypes.find(name);
+      if(tit != g_lambdaCaptureTypes.end())
+        for(const auto& kv : tit->second) fi.types[kv.first] = kv.second;
+    }
     auto pit = fnParamTypes.find(name);
     for(size_t i=0;i<params.size();++i){
       VType pt = (pit!=fnParamTypes.end() && i<pit->second.size()) ? pit->second[i] : VType::Int;
@@ -1391,6 +1667,17 @@ struct Codegen {
       }
     }
 
+    // Copy the captures out of the closure block into their frame slots. From
+    // here on they are indistinguishable from locals.
+    if(caps && !caps->empty()){
+      const int ctxSlot = -fi.offset.at("__ctx");
+      for(size_t i=0;i<caps->size();++i){
+        a.mov_load_rbp(X64Asm::RAX, ctxSlot);
+        a.mov_load_base(X64Asm::RAX, X64Asm::RAX, (int32_t)(8 + 8*i));
+        a.mov_store_rbp(-fi.offset.at((*caps)[i]), X64Asm::RAX);
+      }
+    }
+
     genStmt(body);
 
     a.xor_eax_eax();
@@ -1430,6 +1717,7 @@ struct Codegen {
     g_arrElemTypes.clear();
     g_resultPayload.clear();
     g_fnResultPayload.clear();
+    g_lambdaCaptureTypes.clear();
     g_recordTypes.clear();
     g_varRecordType.clear();
     registerRecordTypes(program);
@@ -1455,6 +1743,38 @@ struct Codegen {
       }
       else rest.push_back(k);
     }
+    // --- closure lifting --------------------------------------------------
+    // Before anything else looks at the tree: every anonymous umurimo becomes
+    // a named top-level function, so inference, checking and emission all see
+    // ordinary functions and need no special case.
+    g_lambdaCaptures.clear();
+    g_lifted.clear();
+    g_lambdaCounter = 0;
+    g_declaredFns.clear();
+    callables.clear();
+    collectCallableNames(program, callables);
+    for(auto& kv : externs) callables.insert(kv.first);
+    for(const auto& b : Checker::builtinArity()) callables.insert(b.first);
+    callables.insert("andika");
+    for(auto& f : funcs) g_declaredFns.insert(f->sval);
+    g_varLambda.clear();
+    g_fnLambda.clear();
+    liftLambdas(program, callables);
+    for(auto& L : g_lifted){
+      auto fd = mk(NT::FuncDecl);
+      fd->sval = L.name;
+      fd->params = L.params;
+      fd->kids.push_back(L.body);
+      funcs.push_back(fd);
+      callables.insert(L.name);
+      g_declaredFns.insert(L.name);
+    }
+    // Which functions yield closures has to be known before the variables that
+    // receive them, so these are two separate walks over the whole program.
+    for(auto& f : funcs) noteFnLambda(f->kids[0], f->sval);
+    noteLambdaVars(program);
+    checkSelfCapture(program);
+
     auto restBlock = mk(NT::Block);
     restBlock->kids = rest;
 
@@ -1470,6 +1790,16 @@ struct Codegen {
         for(size_t i=0;i<f->params.size();++i){
           VType pt = (pit!=fnParamTypes.end() && i<pit->second.size()) ? pit->second[i] : VType::Int;
           types[f->params[i]] = pt;
+        }
+        // A lifted lambda's captures are not parameters, so nothing above puts
+        // them in `types`. inferPass over restBlock ran first this iteration
+        // and recorded what they meant in the enclosing scope; without this the
+        // body of `umurimo() { tanga "mwiriwe " + izina; }` types as Int and
+        // the call site prints the concatenated string as a pointer.
+        {
+          auto tit = g_lambdaCaptureTypes.find(f->sval);
+          if(tit != g_lambdaCaptureTypes.end())
+            for(const auto& kv : tit->second) types[kv.first] = kv.second;
         }
         inferPass(f->kids[0], types, fnParamTypes);
         bool found=false; VType rt=VType::Int;

@@ -9,6 +9,7 @@ struct Parser {
   Parser(const std::vector<Token>& toks):t(toks){}
   Token& cur(){ return const_cast<Token&>(t[pos]); }
   bool check(Tok tt){ return cur().type==tt; }
+  bool checkNext(Tok tt){ return pos+1 < t.size() && t[pos+1].type==tt; }
   Token advance(){ return t[pos++]; }
   Token expect(Tok tt, const std::string& msg){
     if(!check(tt)) throw std::runtime_error("Ikosa: "+msg+" ku murongo "+std::to_string(cur().line));
@@ -35,7 +36,9 @@ struct Parser {
     if(check(Tok::REKA)) __n = varDecl();
     else if(check(Tok::NIBA)) __n = ifStmt();
     else if(check(Tok::MUGIHE)) __n = whileStmt();
-    else if(check(Tok::UMURIMO)) __n = funcDecl();
+    // `umurimo name(...)` declares; `umurimo (...)` with no name is an
+    // anonymous function, which is an expression and can start a statement.
+    else if(check(Tok::UMURIMO) && !checkNext(Tok::LPAREN)) __n = funcDecl();
     else if(check(Tok::TANGA)) __n = returnStmt();
     else if(check(Tok::ANDIKA)) __n = printStmt();
     else if(check(Tok::HANZE)) __n = externDecl();
@@ -150,6 +153,21 @@ struct Parser {
     std::string name = expect(Tok::IDENT,"izina ry'umurimo").text;
     expect(Tok::LPAREN,"'('");
     auto n=mk(NT::FuncDecl); n->sval=name;
+    if(!check(Tok::RPAREN)){
+      n->params.push_back(expect(Tok::IDENT,"parameter").text);
+      while(check(Tok::COMMA)){ advance(); n->params.push_back(expect(Tok::IDENT,"parameter").text); }
+    }
+    expect(Tok::RPAREN,"')'");
+    n->kids.push_back(block());
+    return n;
+  }
+
+  // umurimo (x, y) { ... } -- an anonymous function. Captures the enclosing
+  // variables it uses BY VALUE, at the moment it is created.
+  NodePtr lambda(){
+    advance();                                   // umurimo
+    expect(Tok::LPAREN,"'('");
+    auto n=mk(NT::Lambda);
     if(!check(Tok::RPAREN)){
       n->params.push_back(expect(Tok::IDENT,"parameter").text);
       while(check(Tok::COMMA)){ advance(); n->params.push_back(expect(Tok::IDENT,"parameter").text); }
@@ -340,6 +358,7 @@ struct Parser {
     if(check(Tok::STR)){ auto tk=advance(); auto n=mk(NT::Str); n->sval=tk.text; return n; }
     if(check(Tok::NIBYO)){ advance(); auto n=mk(NT::Bool); n->bval=true; return n; }
     if(check(Tok::OYA)){ advance(); auto n=mk(NT::Bool); n->bval=false; return n; }
+    if(check(Tok::UMURIMO)) return lambda();
     if(check(Tok::IDENT)){ auto tk=advance(); auto n=mk(NT::Var); n->sval=tk.text; return n; }
     if(check(Tok::LPAREN)){ advance(); auto e=expression(); expect(Tok::RPAREN,"')'"); return e; }
     if(check(Tok::LBRACKET)){

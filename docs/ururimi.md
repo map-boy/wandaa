@@ -188,6 +188,76 @@ works.
 
 ---
 
+## 6c. Imirimo itagira izina — Closures
+
+`umurimo` idafite izina ni agaciro: ushobora kuyishyira mu kigereranyo,
+kuyihereza undi murimo, no kuyisubiza.
+
+An `umurimo` with no name is a value. It can be stored in a variable, passed
+to another function, put in an array, and returned:
+
+```wandaa
+reka kubyaza = umurimo(x) { tanga x * x; };
+andika(kubyaza(7));            # 49
+
+umurimo koresha(g, v) { tanga g(v); }
+andika(koresha(kubyaza, 9));   # 81
+```
+
+Ifata ibigereranyo byo hanze ikoresha — **it captures the enclosing variables
+it uses**, so a function can build another function:
+
+```wandaa
+umurimo gukuba(k) { tanga umurimo(x) { tanga x * k; }; }
+reka kabiri = gukuba(2);
+reka gatatu = gukuba(3);
+andika(kabiri(21));            # 42
+andika(gatatu(14));            # 42
+```
+
+### Ifata ku gaciro — capture is by value
+
+Ifata **kopi** y'agaciro igihe iremwe, ntabwo ifata ikigereranyo ubwacyo:
+
+```wandaa
+reka n = 10;
+reka f = umurimo(x) { tanga x + n; };
+n = 99;
+andika(f(5));                  # 15, si 104
+```
+
+Iyi ni ihitamo, si ubunebwe. Capture by value is a decision, not a shortcut: a
+closure can outlive the call it was created in, and with no reference counting
+yet (see [ROADMAP.md](../ROADMAP.md)) a captured *variable* would be a pointer
+into a dead frame. A copy is always safe, and it is the rule that is easiest to
+explain.
+
+Bivuze ko closure idashobora guhindura ikigereranyo cyo hanze. It also means a
+closure cannot mutate an enclosing variable — assigning to a captured name
+changes only the closure's own copy.
+
+Uko bikorwa imbere: umurimo utagira izina uba umurimo usanzwe wo hejuru,
+hamwe n'agace ka heap gafite aderesi y'amabwiriza na kopi ya buri gaciro
+gifashwe. Internally an anonymous function becomes an ordinary top-level
+function plus a heap block holding its code pointer and a copy of each captured
+value; the block travels as a hidden first argument.
+
+Ibigomba kumenyekana — the limits:
+
+- Closure yakiriwe nka **parameter** (nka `g` muri `koresha` hejuru) ntizwi
+  ubwoko bw'ibyo isubiza, bityo isubizwa nk'umubare. A closure received as a
+  parameter has no known return type, so a string it returns prints as a
+  pointer. Assign it to a variable from the `umurimo` or from the function that
+  builds it, and the type is known.
+- Nta recursion y'umurimo utagira izina: `reka f = umurimo(n){ ... f(...) ... };`
+  ifata `f` mbere y'uko `reka` iyishyiraho, bityo compiler irayanga ikubwira
+  gukoresha umurimo ufite izina. An anonymous function cannot call itself: it
+  captures the variable before the declaration binds it, so this is rejected at
+  compile time with a message pointing at the fix. A named `umurimo` recurses
+  normally.
+
+---
+
 ## 7. Amagambo — Strings
 
 Ijambo rya Wandaa ni aderesi y'ibice byaryo, rifite **uburebure bw'ibice 8
@@ -410,6 +480,7 @@ line the same way:
 Ibi biri muri [ROADMAP.md](../ROADMAP.md):
 
 - `for` loops
+- Generics
 - Ubwoko bwanditswe (explicit type annotations)
 - Amagambo ya Unicode arenze ASCII mu `inyuguti()` / `igice()` (byombi
   bikorera ku bice, not on code points)
