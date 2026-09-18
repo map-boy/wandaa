@@ -715,12 +715,34 @@ struct Codegen {
     a.lea_base(X64Asm::RAX, X64Asm::R12, 8);
   }
 
+  // ---- bounds checking ---------------------------------------------------
+  //
+  // Emitted before every indexed read and write. RAX holds the data pointer,
+  // RBX the index; the element count sits in the 8-byte header at [ptr-8],
+  // the same header ubunini() reads.
+  //
+  // The comparison is UNSIGNED, so a negative index wraps to a huge value and
+  // fails the same test -- one branch covers both ends. On failure control
+  // goes to wandaa_bounds_trap, which reports the source line and does not
+  // return, so nothing needs saving across it.
+  void emitBoundsCheck(){
+    const std::string Lok = newLabel("Lbound");
+    a.mov_load_base(X64Asm::RCX, X64Asm::RAX, -8);   // RCX = element count
+    a.cmp(X64Asm::RBX, X64Asm::RCX);
+    a.jb(Lok);                                        // index < count -> fine
+    a.mov_reg(X64Asm::RCX, X64Asm::RBX);              // arg 1: the index
+    a.mov_load_base(X64Asm::RDX, X64Asm::RAX, -8);    // arg 2: the count
+    callRuntime("wandaa_bounds_trap");
+    a.defineLabel(Lok);
+  }
+
   void genIndex(const NodePtr& n){
     genExpr(n->kids[0]);
     pushTmp(X64Asm::RAX);
     genExpr(n->kids[1]);
     a.mov_reg(X64Asm::RBX, X64Asm::RAX);
     popTmp(X64Asm::RAX);
+    emitBoundsCheck();
     a.mov_load_sib(X64Asm::RAX, X64Asm::RAX, X64Asm::RBX);
   }
 
@@ -730,6 +752,7 @@ struct Codegen {
     genExpr(n->kids[1]);
     a.mov_reg(X64Asm::RBX, X64Asm::RAX);
     popTmp(X64Asm::RAX);
+    emitBoundsCheck();
     a.lea_sib(X64Asm::RAX, X64Asm::RAX, X64Asm::RBX);
     pushTmp(X64Asm::RAX);
     genExpr(n->kids[2]);

@@ -284,11 +284,13 @@ int main(int argc, char** argv) {
     h.note("jz Lback");        h.a.jz("Lback");
     h.note("jnz Lback");       h.a.jnz("Lback");
     h.note("jp Lback");        h.a.jp("Lback");
+    h.note("jb Lback");        h.a.jb("Lback");
     h.note("call Lback");      h.a.call_label("Lback");
     h.note("jmp Lfwd");        h.a.jmp("Lfwd");
     h.note("jz Lfwd");         h.a.jz("Lfwd");
     h.note("jnz Lfwd");        h.a.jnz("Lfwd");
     h.note("jp Lfwd");         h.a.jp("Lfwd");
+    h.note("jb Lfwd");         h.a.jb("Lfwd");
     h.note("call Lfwd");       h.a.call_label("Lfwd");
     pad();
     h.src += "Lfwd:\n";

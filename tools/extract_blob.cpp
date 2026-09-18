@@ -272,7 +272,7 @@ int main(int argc, char** argv) {
                                  "wandaa_str_eq", "wandaa_read_file", "wandaa_write_file",
                                  "wandaa_str_from_c", "wandaa_str_at", "wandaa_substr",
                                  "wandaa_int_to_str", "wandaa_str_to_int", "wandaa_array_new",
-                                 "wandaa_print_float",
+                                 "wandaa_print_float", "wandaa_bounds_trap",
                                  "wandaa_current_line", "wandaa_empty_str"}) {
         if (!labels.count(required))
             fail(std::string("required label '") + required +

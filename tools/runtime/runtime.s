@@ -45,6 +45,7 @@
 .globl wandaa_str_to_int
 .globl wandaa_array_new
 .globl wandaa_print_float
+.globl wandaa_bounds_trap
 .globl wandaa_read_file
 .globl wandaa_write_file
 .globl wandaa_append_file
@@ -91,6 +92,15 @@ wandaa_fltbuf:        .space 512, 0
 
 wandaa_nan_msg:       .ascii "NaN\n"
 .set wandaa_nan_len, . - wandaa_nan_msg
+
+wandaa_oob_msg:       .ascii "Ikosa: urutonde rurenzwe (index out of range) ku murongo: "
+.set wandaa_oob_len, . - wandaa_oob_msg
+
+wandaa_oob_idx:       .ascii ", aho ugerageje: "
+.set wandaa_oob_idx_len, . - wandaa_oob_idx
+
+wandaa_oob_cnt:       .ascii ", ubunini: "
+.set wandaa_oob_cnt_len, . - wandaa_oob_cnt
 
 wandaa_crash_msg:     .ascii "Ikosa ku murongo: "
 .set wandaa_crash_msg_len, . - wandaa_crash_msg
@@ -152,6 +162,21 @@ wandaa_print_int:
   sub rsp, 48
   push rbx
   sub rsp, 8
+  mov r9, 1                         # want the trailing newline
+  jmp wandaa_pi_body
+
+# Same digits, no trailing newline, so a caller can place a number in the
+# middle of a line. Shares the body below; r9 is the only difference, and
+# nothing between here and the print_str call touches it.
+wandaa_print_int_nonl:
+  push rbp
+  mov rbp, rsp
+  sub rsp, 48
+  push rbx
+  sub rsp, 8
+  xor r9, r9                        # suppress the newline
+
+wandaa_pi_body:
   mov rax, rcx
   xor r10, r10                      # digit count
   xor r11, r11                      # negative flag
@@ -181,7 +206,7 @@ wandaa_pi_loop:
 wandaa_pi_nosign:
   mov rcx, rbx
   mov rdx, r10
-  inc rdx                           # + the newline
+  add rdx, r9                       # + the newline, only if it was wanted
   call wandaa_print_str
   add rsp, 8
   pop rbx
@@ -924,6 +949,50 @@ wandaa_pf_done:
   add rsp, 64
   pop rbp
   ret
+
+# ===================== wandaa_bounds_trap(index, count) =====================
+#  Reached only when an index is outside its array. Reports the source line --
+#  wandaa_current_line is already maintained per statement for the crash
+#  handler -- then the offending index and the array's length, and exits 1.
+#
+#  Does not return.
+wandaa_bounds_trap:
+  push rbp
+  mov rbp, rsp
+  sub rsp, 48
+  push rbx
+  push r12
+  # NO `sub rsp, 8` here. Entry leaves RSP at 8 mod 16; push rbp makes it 0,
+  # sub 48 keeps it 0, and TWO pushes return it to 0. The other runtime
+  # routines add 8 because they push an ODD number of registers -- copying
+  # that here would misalign ExitProcess.
+
+  mov rbx, rcx                      # index
+  mov r12, rdx                      # count
+
+  lea rcx, [rip+wandaa_oob_msg]
+  mov edx, OFFSET wandaa_oob_len
+  call wandaa_print_str
+
+  mov rcx, [rip+wandaa_current_line]
+  call wandaa_print_int_nonl
+
+  lea rcx, [rip+wandaa_oob_idx]
+  mov edx, OFFSET wandaa_oob_idx_len
+  call wandaa_print_str
+  mov rcx, rbx                      # the index that was asked for
+  call wandaa_print_int_nonl
+
+  lea rcx, [rip+wandaa_oob_cnt]
+  mov edx, OFFSET wandaa_oob_cnt_len
+  call wandaa_print_str
+  mov rcx, r12                      # the length it had to be under
+  call wandaa_print_int             # this one ends the line
+
+  mov ecx, 1
+  sub rsp, 32
+  call qword ptr [rip+__imp_ExitProcess]
+  hlt
 
 # ================================ _start ====================================
 _start:

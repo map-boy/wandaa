@@ -1,0 +1,14 @@
+# Bounds-checked indexing: valid accesses go through untouched,
+# the first out-of-range access stops the program with exit 1.
+reka a = [10, 20, 30];
+andika(a[0]);
+andika(a[2]);
+# Writes are checked too, and a dynamically sized array carries
+# the same 8-byte count header a literal does.
+reka b = urutonde(2);
+b[1] = 99;
+andika(b[1]);
+andika("mbere y'ikosa");
+# 3 is one past the end. This never returns.
+andika(a[3]);
+andika("ntibigera hano");

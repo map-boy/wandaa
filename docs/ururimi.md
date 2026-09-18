@@ -225,7 +225,19 @@ b[99] = 7;
 
 Urutonde rubikwa muri heap, rufite **umubare w'ibice 8 imbere** — arrays are
 heap allocated with an 8-byte element count before the data, the same shape as
-strings. Indexing is not bounds-checked; `inyuguti()` is, and returns -1.
+strings.
+
+Indexing **is** bounds-checked, ku gusoma no ku kwandika — on reads and on
+writes alike. Niba index isohotse mu rutonde, porogaramu ihagarara ivuga
+umurongo, index, n'ubunini:
+
+```
+Ikosa: urutonde rurenzwe (index out of range) ku murongo: 13, aho ugerageje: 3, ubunini: 3
+```
+
+Porogaramu isohoka na code 1. Index mbi (negative) na yo ifatwa kimwe: igereranya
+rikorwa nka *unsigned*, bityo -1 ihinduka umubare munini cyane kandi inanirwa
+igeragezwa rimwe. `inyuguti()` yo ntihagarika porogaramu — igarura -1.
 
 ---
 

@@ -159,6 +159,10 @@ public:
     // NaN. Every float comparison has to branch this out first, because NaN
     // compares false against everything including itself.
     void jp(const std::string& label)   { emit(0x0F); emit(0x8A); fixups_.push_back({code.size(), label, 0}); emit32(0); }
+    // jb -- UNSIGNED below. Bounds checks rely on this: comparing a signed
+    // index against a length unsigned means a negative index wraps to a huge
+    // value and fails the same test, so one branch catches both ends.
+    void jb(const std::string& label)   { emit(0x0F); emit(0x82); fixups_.push_back({code.size(), label, 0}); emit32(0); }
     void call_label(const std::string& label) { emit(0xE8); fixups_.push_back({code.size(), label, 0}); emit32(0); }
 
     // =======================================================================
