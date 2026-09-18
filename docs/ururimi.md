@@ -67,6 +67,8 @@ bumenyekana — types are inferred, not declared.
 | `na` / `&&` | `and`, short-circuit |
 | `cyangwa` / `\|\|` | `or`, short-circuit |
 | `si` / `!` | `not` |
+| `&x` | aderesi (address-of), kugira ngo ihabwe umurimo wo hanze |
+| `x?` | gutwara ikosa (propagate a failure) — reba igice cya 8b |
 
 Imibare yuzuye ni iy'ibice 64 (signed 64-bit). Imibare y'ibice ni IEEE-754
 `f64`.
@@ -241,6 +243,79 @@ igeragezwa rimwe. `inyuguti()` yo ntihagarika porogaramu — igarura -1.
 
 ---
 
+## 8b. Igisubizo — Results
+
+Umurimo ushobora kunanirwa ntugomba guhitamo hagati yo guhagarika porogaramu
+no kubeshya. Utanga **igisubizo**: byagenze neza gifite agaciro, cyangwa
+byanze gifite ubutumwa.
+
+A function that can fail should not have to choose between crashing and
+lying about its answer. It returns a **result** instead: either a success
+carrying a value, or a failure carrying a message.
+
+```wandaa
+umurimo gabanya(a, b) {
+  niba (b == 0) { tanga byanze("ntushobora kugabanya na zeru"); }
+  tanga byakunze(a / b);
+}
+
+reka r = gabanya(20, 4);
+niba (byarakunze(r)) { andika(agaciro(r)); }
+ubundi { andika(ikosa(r)); }
+```
+
+| Umurimo | Icyo ukora |
+|---|---|
+| `byakunze(v)` | igisubizo cyagenze neza gifite `v` — a success carrying `v` |
+| `byanze(ubutumwa)` | igisubizo cyanze gifite ubutumwa — a failure carrying a message |
+| `byarakunze(r)` | 1 iyo byagenze neza, 0 iyo byanze |
+| `agaciro(r)` | agaciro kiri imbere — the value inside |
+| `ikosa(r)` | ubutumwa bw'ikosa — the failure message |
+
+### `?` — gutwara ikosa
+
+`?` ni ikimenyetso cy'ingenzi. Iyo byagenze neza, ni agaciro kiri imbere.
+Iyo byanze, umurimo urimo uhita utanga iryo kosa nk'uko riri.
+
+`?` is the point of the type. On a success it is the value inside; on a
+failure the enclosing function returns that failure immediately. A chain of
+fallible calls reads like a chain of ordinary ones, and no error can be
+dropped by forgetting to look at it:
+
+```wandaa
+umurimo kabiri(a, b) {
+  reka k = gabanya(a, b)?;      # ihagarara hano iyo gabanya yanze
+  tanga byakunze(k * 2);
+}
+```
+
+Ku rwego rwo hejuru nta murimo uhamagaye, bityo `?` yandika ubutumwa
+igasohoka na 1. At top level there is no caller to return to, so `?` reports
+the message and exits 1 rather than losing it.
+
+Umurongo werekanwa ni aho ikosa **ryavukiye** — aho `byanze(...)` yakoreshejwe,
+si aho `?` iri. The line reported is where the failure was *created*, not where
+it was propagated, because that is the line worth looking at.
+
+Ibigomba kumenyekana — the limits, and they are real:
+
+- `agaciro(r)` ku gisubizo cyanze ihagarika porogaramu, nka `unwrap` muri Rust.
+  Koresha `byarakunze()` cyangwa `?` mbere. `ikosa(r)` ku gisubizo cyagenze
+  neza na yo ihagarika, kuko ari ikosa ryo kwandika.
+- Nta generics (reba [ROADMAP.md](../ROADMAP.md)), bityo ubwoko bw'agaciro
+  buvamo *inference* aho kuva mu bisobanuro. Iyo compiler idashobora kumenya
+  ubwoko, isubiza `Int`. There are no generics yet, so the payload's type is
+  inferred rather than declared, and falls back to integer when it cannot be
+  worked out — a string payload would then print as a pointer.
+- `andika(r)` ku gisubizo cyagenze neza cyandika `byakunze` gusa, kitandika
+  agaciro: nta kintu na kimwe mu gihe cyo gukora kivuga icyo ayo mabayiti 8
+  ari cyo. `andika` on a success prints only `byakunze`, because nothing at
+  runtime records what the payload is.
+- Umurimo uhamagara undi wanditswe **nyuma** muri dosiye ntabwo umenya
+  ubwoko bw'agaciro ke — ni ko bimeze na `urutonde`.
+
+---
+
 ## 9. Ibikorwa fatizo — Builtins
 
 | Umurimo | Icyo ukora |
@@ -257,6 +332,8 @@ igeragezwa rimwe. `inyuguti()` yo ntihagarika porogaramu — igarura -1.
 | `ijambo(p)` | raw NUL-terminated pointer → Wandaa string |
 | `soma(dosiye)` | read a whole file as a string |
 | `andikamo(dosiye, ibirimo)` | write a string to a file |
+| `byakunze(v)` / `byanze(u)` | igisubizo (result) — reba igice cya 8b |
+| `byarakunze(r)` / `agaciro(r)` / `ikosa(r)` | kugenzura igisubizo |
 
 ---
 
@@ -319,13 +396,19 @@ source line instead of a raw exit code:
 Ikosa ku murongo: 3
 ```
 
+Hari ahandi porogaramu ihagarara ivuga umurongo — three other stops report a
+line the same way:
+
+- `a[i]` iyo `i` isohotse mu rutonde (reba igice cya 8)
+- `agaciro(r)` ku gisubizo cyanze, na `ikosa(r)` ku gisubizo cyagenze neza
+- `?` ku rwego rwo hejuru iyo byanze (reba igice cya 8b)
+
 ---
 
 ## 13. Ibitaraboneka — Not yet in the language
 
 Ibi biri muri [ROADMAP.md](../ROADMAP.md):
 
-- `struct` / records
 - `for` loops
 - Ubwoko bwanditswe (explicit type annotations)
 - Amagambo ya Unicode arenze ASCII mu `inyuguti()` / `igice()` (byombi

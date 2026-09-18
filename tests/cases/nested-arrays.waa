@@ -1,0 +1,27 @@
+# Regression: building an array literal held the block pointer in R12 across
+# each element's own code. A CALL preserves R12, but a NESTED literal is
+# codegen rather than a call and overwrote it, so the outer array was filled
+# through a clobbered pointer. Results had the same shape and the same bug.
+reka a = [[1, 2], [3, 4]];
+andika(ubunini(a));
+reka r0 = a[0];
+reka r1 = a[1];
+andika(r0[0]); andika(r0[1]);
+andika(r1[0]); andika(r1[1]);
+
+reka deep = [[[9]]];
+reka d1 = deep[0];
+reka d2 = d1[0];
+andika(d2[0]);
+
+umurimo gatatu(x) { tanga x * 3; }
+reka calls = [gatatu(1), gatatu(2), gatatu(3)];
+andika(calls[0]); andika(calls[2]);
+
+reka nested = byakunze(byakunze(7));
+andika(agaciro(agaciro(nested)));
+
+reka mu_rutonde = byakunze([5, 6, 7]);
+reka inner = agaciro(mu_rutonde);
+andika(ubunini(inner));
+andika(inner[2]);

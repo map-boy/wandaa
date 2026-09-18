@@ -1,0 +1,10 @@
+# A `?` at top level has no caller to hand the failure to, so it reports the
+# message and exits 1 rather than losing it silently.
+umurimo soma_umubare(s) {
+  niba (uburebure(s) == 0) { tanga byanze("ijambo ririmo ubusa"); }
+  tanga byakunze(mu_mubare(s));
+}
+andika(agaciro(soma_umubare("42")));
+andika("mbere y'ikosa");
+reka x = soma_umubare("")?;
+andika("ntibigera hano");

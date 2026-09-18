@@ -1,0 +1,39 @@
+# Igisubizo -- a result is either a success carrying a value, or a failure
+# carrying a message. Nothing can read the value without dealing with both.
+umurimo gabanya(a, b) {
+  niba (b == 0) { tanga byanze("ntushobora kugabanya na zeru"); }
+  tanga byakunze(a / b);
+}
+
+reka mwiza = gabanya(20, 4);
+andika(byarakunze(mwiza));
+andika(agaciro(mwiza));
+andika(mwiza);
+
+reka mubi = gabanya(20, 0);
+andika(byarakunze(mubi));
+andika(ikosa(mubi));
+andika(mubi);
+
+# `?` unwraps a success and hands a failure straight back to the caller, so
+# this body reads like ordinary arithmetic and still cannot ignore an error.
+umurimo kabiri(a, b) {
+  reka k = gabanya(a, b)?;
+  tanga byakunze(k * 2);
+}
+andika(agaciro(kabiri(20, 4)));
+andika(ikosa(kabiri(20, 0)));
+
+# The payload keeps its type across the return boundary: this one is a string,
+# so it concatenates rather than printing as a pointer.
+umurimo indamukanyo(izina) { tanga byakunze("mwiriwe " + izina); }
+reka s = indamukanyo("Wandaa")?;
+andika(s + "!");
+
+# A float payload stays a float.
+andika(agaciro(byakunze(2.5)));
+
+# Results are ordinary values: they go in arrays and nest.
+reka bose = [gabanya(9, 3), gabanya(9, 0)];
+andika(byarakunze(bose[0]));
+andika(byarakunze(bose[1]));

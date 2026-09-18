@@ -52,7 +52,7 @@ namespace {
 
 using R = X64Asm::Reg;
 
-enum class VType { Int, Str, Arr, Float, Record };
+enum class VType { Int, Str, Arr, Float, Record, Result };
 
 // An f64 value travels in a general-purpose register as its raw IEEE-754 bit
 // pattern, and only moves into an XMM register for the arithmetic itself. That
@@ -63,6 +63,15 @@ inline bool isNum(VType t){ return t == VType::Int || t == VType::Float; }
 
 std::unordered_map<std::string,VType> g_fnReturnTypes;
 std::unordered_map<std::string,VType> g_arrElemTypes;
+
+// What a SUCCESSFUL result carries. There are no generics yet, so a result's
+// payload has no type of its own and would read back as plain Int -- exactly
+// the problem g_arrElemTypes solves for arrays. `reka r = byakunze("ni byiza");`
+// records Str against r, so `agaciro(r)` and `r?` come back as a string rather
+// than as the pointer's numeric value. Keyed by variable and by function,
+// mirroring g_arrElemTypes / g_fnArrElemTypes.
+std::unordered_map<std::string,VType> g_resultPayload;     // variable -> payload
+std::unordered_map<std::string,VType> g_fnResultPayload;   // function -> payload
 
 struct RecordTypeInfo {
   std::vector<std::string> fieldNames;
@@ -119,6 +128,29 @@ FnInfo buildFnInfo(const std::vector<std::string>& params, const NodePtr& body){
   return fi;
 }
 
+VType evalType(const NodePtr& n, const std::unordered_map<std::string,VType>& types);
+
+// The type of the value inside a successful result.
+//
+// This is inference, not knowledge: nothing at runtime records what those 8
+// bytes are. Three cases are certain enough to use -- a byakunze() written out
+// directly, a variable a result was assigned to, and a call to a function whose
+// `tanga byakunze(...)` was already seen. Everything else falls back to Int,
+// the same fallback the rest of this file uses, which means the payload prints
+// as a number. That is the cost of not having generics yet.
+VType payloadTypeOf(const NodePtr& n, const std::unordered_map<std::string,VType>& types){
+  if(!n) return VType::Int;
+  if(n->type==NT::Call){
+    if(n->sval=="byakunze" && n->kids.size()==1) return evalType(n->kids[0], types);
+    auto it = g_fnResultPayload.find(n->sval);
+    if(it != g_fnResultPayload.end()) return it->second;
+  } else if(n->type==NT::Var){
+    auto it = g_resultPayload.find(n->sval);
+    if(it != g_resultPayload.end()) return it->second;
+  }
+  return VType::Int;
+}
+
 VType evalType(const NodePtr& n, const std::unordered_map<std::string,VType>& types){
   switch(n->type){
     case NT::Str: return VType::Str;
@@ -133,6 +165,8 @@ VType evalType(const NodePtr& n, const std::unordered_map<std::string,VType>& ty
       return VType::Int;
     }
     case NT::IndexAssign: return evalType(n->kids[2], types);
+    // `e?` is the value inside a success -- the failure path never reaches here.
+    case NT::Try: return payloadTypeOf(n->kids[0], types);
     case NT::RecordLit: return VType::Record;
     case NT::FieldAccess: {
       const std::string tname = recordTypeNameOf(n->kids[0]);
@@ -184,7 +218,14 @@ VType evalType(const NodePtr& n, const std::unordered_map<std::string,VType>& ty
         {"inyuguti",  VType::Int},
         {"mu_mubare", VType::Int},
         {"urutonde",  VType::Arr},
+        {"byakunze",  VType::Result},
+        {"byanze",    VType::Result},
+        {"byarakunze",VType::Int},     // 1 or 0
+        {"ikosa",     VType::Str},     // the failure message
       };
+      // agaciro() hands back whatever was put in, so it is not a fixed type.
+      if(n->sval=="agaciro" && n->kids.size()==1)
+        return payloadTypeOf(n->kids[0], types);
       auto bit = builtinReturnTypes.find(n->sval);
       return bit != builtinReturnTypes.end() ? bit->second : VType::Int;
     }
@@ -233,6 +274,19 @@ void findArrayReturnType(const NodePtr& n, const std::string& fnName){
   for(auto& k : n->kids) findArrayReturnType(k, fnName);
 }
 
+// The same idea for results: `tanga byakunze("mwiriwe");` inside umurimo F
+// records Str against F, so `F()?` at the call site is a string. Also follows
+// `tanga r;` where r is a variable already known to hold a result.
+void findResultReturnType(const NodePtr& n, const std::string& fnName,
+                          const std::unordered_map<std::string,VType>& types){
+  if(!n) return;
+  if(n->type==NT::Return && !n->kids.empty()){
+    const VType pt = payloadTypeOf(n->kids[0], types);
+    if(pt != VType::Int) g_fnResultPayload[fnName] = pt;
+  }
+  for(auto& k : n->kids) findResultReturnType(k, fnName, types);
+}
+
 void collectTypesRec(const NodePtr& n, std::unordered_map<std::string,VType>& types){
   if(!n) return;
   if(n->type==NT::FuncDecl){
@@ -257,6 +311,12 @@ void collectTypesRec(const NodePtr& n, std::unordered_map<std::string,VType>& ty
       // receiving its return value, e.g. `reka imirongo = gabanya(...);`
       auto fit = g_fnArrElemTypes.find(n->kids[0]->sval);
       if(fit != g_fnArrElemTypes.end()) g_arrElemTypes[n->sval] = fit->second;
+    }
+    // `reka r = byakunze(x);` or `reka r = gusoma(...);` -- remember what a
+    // success would carry, so agaciro(r) and r? read back as the right type.
+    if(evalType(n->kids[0], types) == VType::Result){
+      const VType pt = payloadTypeOf(n->kids[0], types);
+      if(pt != VType::Int) g_resultPayload[n->sval] = pt;
     }
   }
   noteIndexedWrite(n, types);
@@ -379,7 +439,8 @@ struct Checker {
     static const std::unordered_map<std::string,size_t> m = {
       {"uburebure",1},{"ubunini",1},{"soma",1},{"andikamo",2},{"ongeramo",2},
       {"ijambo",1},{"inyuguti",2},{"igice",3},{"mu_ijambo",1},{"mu_mubare",1},
-      {"urutonde",1},{"mu_bice",1},{"mu_mubare_wuzuye",1}
+      {"urutonde",1},{"mu_bice",1},{"mu_mubare_wuzuye",1},
+      {"byakunze",1},{"byanze",1},{"byarakunze",1},{"agaciro",1},{"ikosa",1}
     };
     return m;
   }
@@ -396,6 +457,7 @@ struct Checker {
       case VType::Arr:    return "urutonde";
       case VType::Float:  return "umubare w'ibice";
       case VType::Record: return "ubwoko";
+      case VType::Result: return "igisubizo";
       default:            return "umubare";
     }
   }
@@ -552,6 +614,7 @@ struct Codegen {
   FnInfo* cur = nullptr;
   int labelCounter = 0;
   std::string epilogue;
+  std::string curFnName;
   std::unordered_map<std::string,std::vector<VType>> fnParamTypes;
 
   size_t blobBase = 0, codeBase = 0;
@@ -707,12 +770,108 @@ struct Codegen {
     a.mov_reg(X64Asm::R12, X64Asm::RAX);
     a.mov_store_imm_base(X64Asm::R12, 0, (int32_t)count);
     for(size_t i=0;i<count;++i){
+      // R12 has to be saved across the element's own code, not just across the
+      // calls in it. A CALL preserves R12 -- it is callee-saved -- but a
+      // NESTED array literal or result, which is codegen rather than a call,
+      // overwrites it with its own block. Without this `[[1,2],[3,4]]` built
+      // the inner arrays and then stored them through a clobbered pointer.
+      pushTmp(X64Asm::R12);
       genExpr(n->kids[i]);
+      popTmp(X64Asm::R12);
       // The old backend always emitted a disp8 here, which silently truncated
       // past 15 elements. mov_store_base picks disp8/disp32 correctly.
       a.mov_store_base(X64Asm::R12, (int32_t)(8 + i*8), X64Asm::RAX);
     }
     a.lea_base(X64Asm::RAX, X64Asm::R12, 8);
+  }
+
+  // ---- results -----------------------------------------------------------
+  //
+  //  A result is an ordinary heap block in the array shape: an 8-byte count
+  //  header, then two slots, with the value pointing past the header.
+  //
+  //      [ptr-8] = 2          the element count, so ubunini() and the bounds
+  //                           check see a two-element array
+  //      [ptr+0] = tag        1 success, 0 failure
+  //      [ptr+8] = payload    the value, or the failure's message
+  //
+  //  Reusing the array shape is deliberate: no new heap layout, no new runtime
+  //  allocator, and a result can be printed and indexed by code that predates
+  //  it. The tag being 1/0 is what lets byarakunze() be a single load.
+  void genResultNew(const NodePtr& n, int32_t tag){
+    // Allocate BEFORE evaluating the payload, exactly as genArrayLit does: the
+    // block pointer then lives in R12 across the payload's own code, and
+    // nothing has to survive the two import calls.
+    callImport("GetProcessHeap");
+    a.mov_reg(X64Asm::RCX, X64Asm::RAX);
+    a.xorr(X64Asm::RDX, X64Asm::RDX);
+    a.mov_imm(X64Asm::R8, (int64_t)(8 + 2*8));
+    callImport("HeapAlloc");
+    a.mov_reg(X64Asm::R12, X64Asm::RAX);
+    a.mov_store_imm_base(X64Asm::R12, 0, 2);            // count header
+    a.mov_store_imm_base(X64Asm::R12, 8, tag);          // slot 0: the tag
+    pushTmp(X64Asm::R12);                               // see genArrayLit
+    genExpr(n->kids[0]);
+    popTmp(X64Asm::R12);
+    a.mov_store_base(X64Asm::R12, 16, X64Asm::RAX);     // slot 1: the payload
+    a.lea_base(X64Asm::RAX, X64Asm::R12, 8);
+  }
+
+  // agaciro(r) -- the value inside. On a failure there is nothing to hand
+  // back, so this stops the program with the stored message, the way Rust's
+  // unwrap panics. Use byarakunze() first, or `?`, to avoid it.
+  void genResultUnwrap(const NodePtr& n){
+    const std::string Lok = newLabel("Lunwrap");
+    genExpr(n->kids[0]);
+    a.mov_reg(X64Asm::R12, X64Asm::RAX);
+    a.mov_load_base(X64Asm::RAX, X64Asm::R12, 0);       // the tag
+    a.test(X64Asm::RAX, X64Asm::RAX);
+    a.jnz(Lok);
+    a.mov_load_base(X64Asm::RCX, X64Asm::R12, 8);       // the failure message
+    callRuntime("wandaa_result_trap");                  // does not return
+    a.defineLabel(Lok);
+    a.mov_load_base(X64Asm::RAX, X64Asm::R12, 8);
+  }
+
+  // ikosa(r) -- the failure message. Asking a success for its error is a bug
+  // in the program rather than something to handle, so it stops too.
+  void genResultErr(const NodePtr& n){
+    const std::string Lerr = newLabel("Lerr");
+    genExpr(n->kids[0]);
+    a.mov_reg(X64Asm::R12, X64Asm::RAX);
+    a.mov_load_base(X64Asm::RAX, X64Asm::R12, 0);
+    a.test(X64Asm::RAX, X64Asm::RAX);
+    a.jz(Lerr);
+    callRuntime("wandaa_misuse_trap");                  // does not return
+    a.defineLabel(Lerr);
+    a.mov_load_base(X64Asm::RAX, X64Asm::R12, 8);
+  }
+
+  // Postfix `?` -- the whole point of the type. On a success it is the value
+  // inside. On a failure the enclosing function returns that same failure
+  // immediately, so a chain of fallible calls reads like a chain of ordinary
+  // ones and every error still has to go somewhere.
+  //
+  // At top level there is no caller to return to: wandaa_main returning a
+  // failure would exit 0 and print nothing, silently losing it. So top level
+  // reports the message and exits 1, which is what Rust does for a main that
+  // returns an error.
+  void genTry(const NodePtr& n){
+    const std::string Lok = newLabel("Ltry");
+    genExpr(n->kids[0]);
+    a.mov_reg(X64Asm::R12, X64Asm::RAX);
+    a.mov_load_base(X64Asm::RAX, X64Asm::R12, 0);       // the tag
+    a.test(X64Asm::RAX, X64Asm::RAX);
+    a.jnz(Lok);
+    if(curFnName == ENTRY_LABEL){
+      a.mov_load_base(X64Asm::RCX, X64Asm::R12, 8);
+      callRuntime("wandaa_result_trap");                // does not return
+    } else {
+      a.mov_reg(X64Asm::RAX, X64Asm::R12);              // the failure, unchanged
+      a.jmp(epilogue);
+    }
+    a.defineLabel(Lok);
+    a.mov_load_base(X64Asm::RAX, X64Asm::R12, 8);
   }
 
   // ---- bounds checking ---------------------------------------------------
@@ -1032,6 +1191,7 @@ struct Codegen {
         break;
       }
       case NT::Call: genCall(n); break;
+      case NT::Try:  genTry(n); break;
       default: throw std::runtime_error("iyi expression ntiyemewe muri codegen");
     }
   }
@@ -1053,6 +1213,22 @@ struct Codegen {
       {"mu_mubare", "wandaa_str_to_int"},  // string -> number
       {"urutonde",  "wandaa_array_new"}    // zero-filled array of n elements
     };
+    // The result builtins are emitted inline: each is a handful of
+    // instructions over the two-slot block, with no runtime routine to call
+    // except the two traps.
+    if(n->sval=="byakunze" || n->sval=="byanze" || n->sval=="byarakunze" ||
+       n->sval=="agaciro"  || n->sval=="ikosa"){
+      if(n->kids.size() != 1)
+        throw std::runtime_error("'" + n->sval + "' isaba igipimo kimwe gusa");
+      if(n->sval=="byakunze")        { genResultNew(n, 1); return; }
+      if(n->sval=="byanze")          { genResultNew(n, 0); return; }
+      if(n->sval=="agaciro")         { genResultUnwrap(n); return; }
+      if(n->sval=="ikosa")           { genResultErr(n);    return; }
+      genExpr(n->kids[0]);                                 // byarakunze
+      a.mov_load_base(X64Asm::RAX, X64Asm::RAX, 0);        // the tag is already 1/0
+      return;
+    }
+
     std::string target = n->sval;
     auto bit = builtins.find(target);
     if(bit != builtins.end()) target = bit->second;
@@ -1093,9 +1269,10 @@ struct Codegen {
       // wandaa_print_float takes the f64 BIT PATTERN in RCX, not in XMM0. It
       // is an internal helper, and passing bits keeps every runtime call site
       // in this file identical.
-      callRuntime(t == VType::Str   ? "wandaa_print_strval" :
-                  t == VType::Float ? "wandaa_print_float"  :
-                                      "wandaa_print_int");
+      callRuntime(t == VType::Str    ? "wandaa_print_strval" :
+                  t == VType::Float  ? "wandaa_print_float"  :
+                  t == VType::Result ? "wandaa_print_result" :
+                                       "wandaa_print_int");
     }
   }
 
@@ -1166,8 +1343,20 @@ struct Codegen {
       fi.types[params[i]] = pt;
     }
     collectTypesRec(body, fi.types);
+    // Record what a successful result from this function carries, now that
+    // fi.types holds the PARAMETER types too. Doing this in collectTypesRec
+    // instead was wrong: there a body like `tanga byakunze("mwiriwe " + izina);`
+    // could not see that izina was a string, so the payload came out as Int and
+    // the caller printed a pointer.
+    //
+    // User functions are emitted before wandaa_main, so by the time a top-level
+    // call site is typed this is populated. One function calling another that is
+    // declared LATER in the file does not see it -- the same ordering limit
+    // g_fnArrElemTypes has.
+    findResultReturnType(body, name, fi.types);
     cur = &fi;
     epilogue = name + "_epilogue";
+    curFnName = name;
 
     a.defineLabel(name);
     definedFns.push_back(name);
@@ -1239,6 +1428,8 @@ struct Codegen {
   std::vector<uint8_t> generate(const NodePtr& program){
     g_fnReturnTypes.clear();
     g_arrElemTypes.clear();
+    g_resultPayload.clear();
+    g_fnResultPayload.clear();
     g_recordTypes.clear();
     g_varRecordType.clear();
     registerRecordTypes(program);

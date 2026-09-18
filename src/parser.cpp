@@ -306,8 +306,16 @@ struct Parser {
       expect(Tok::RPAREN,"')'");
       n = c;
     }
-    while(check(Tok::LBRACKET) || check(Tok::DOT)){
-      if(check(Tok::LBRACKET)){
+    while(check(Tok::LBRACKET) || check(Tok::DOT) || check(Tok::QUESTION)){
+      if(check(Tok::QUESTION)){
+        // Postfix `?`: on a success this is the value inside; on a failure the
+        // enclosing function returns the failure unchanged. Binds tighter than
+        // any binary operator, so `soma("f")? + "x"` unwraps before concatenating.
+        advance();
+        auto t = mk(NT::Try);
+        t->kids.push_back(n);
+        n = t;
+      } else if(check(Tok::LBRACKET)){
         advance();
         auto idx = expression();
         expect(Tok::RBRACKET,"']'");

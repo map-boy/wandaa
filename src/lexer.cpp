@@ -89,6 +89,7 @@ std::vector<Token> tokenize(const std::string& s){
       case ';': out.push_back({Tok::SEMI,";",0,line}); i++; break;
       case ':': out.push_back({Tok::COLON,":",0,line}); i++; break;
       case '.': out.push_back({Tok::DOT,".",0,line}); i++; break;
+      case '?': out.push_back({Tok::QUESTION,"?",0,line}); i++; break;
       case '=':
         i++; if(peek()=='='){ out.push_back({Tok::EQEQ,"==",0,line}); i++; }
         else out.push_back({Tok::EQ,"=",0,line});

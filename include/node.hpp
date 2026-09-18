@@ -7,7 +7,8 @@ enum class NT {
   Num, Str, Bool, Var, Bin, Un, Assign, VarDecl, Call,
   Block, If, While, FuncDecl, Return, Print, ExprStmt, Program,
   ArrayLit, Index, IndexAssign, ExternDecl, Break, Continue,
-  RecordDecl, RecordLit, FieldAccess, FieldAssign, AddrOf
+  RecordDecl, RecordLit, FieldAccess, FieldAssign, AddrOf,
+  Try                       // postfix `?` -- unwrap a result or propagate its error
 };
 
 struct Node;

@@ -46,6 +46,9 @@
 .globl wandaa_array_new
 .globl wandaa_print_float
 .globl wandaa_bounds_trap
+.globl wandaa_result_trap
+.globl wandaa_misuse_trap
+.globl wandaa_print_result
 .globl wandaa_read_file
 .globl wandaa_write_file
 .globl wandaa_append_file
@@ -101,6 +104,21 @@ wandaa_oob_idx:       .ascii ", aho ugerageje: "
 
 wandaa_oob_cnt:       .ascii ", ubunini: "
 .set wandaa_oob_cnt_len, . - wandaa_oob_cnt
+
+wandaa_res_pfx:       .ascii "Ikosa: "
+.set wandaa_res_pfx_len, . - wandaa_res_pfx
+
+wandaa_res_line:      .ascii " ku murongo: "
+.set wandaa_res_line_len, . - wandaa_res_line
+
+wandaa_res_misuse:    .ascii "ikosa() yahamagawe ku gisubizo cyagenze neza"
+.set wandaa_res_misuse_len, . - wandaa_res_misuse
+
+wandaa_res_ok_tag:    .ascii "byakunze\n"
+.set wandaa_res_ok_tag_len, . - wandaa_res_ok_tag
+
+wandaa_res_err_tag:   .ascii "byanze: "
+.set wandaa_res_err_tag_len, . - wandaa_res_err_tag
 
 wandaa_crash_msg:     .ascii "Ikosa ku murongo: "
 .set wandaa_crash_msg_len, . - wandaa_crash_msg
@@ -993,6 +1011,116 @@ wandaa_bounds_trap:
   sub rsp, 32
   call qword ptr [rip+__imp_ExitProcess]
   hlt
+
+# ====================== wandaa_result_trap(msg) =============================
+#  A failure reached a place that had no way to carry it: agaciro() on a
+#  failed result, or a `?` at top level where there is no caller to return to.
+#  Reports the stored message and the source line, then exits 1.
+#
+#  RCX is a Wandaa string (length in the 8 bytes ahead of it), or 0 for none.
+#  Does not return.
+#
+#  Two pushes, so NO `sub rsp, 8`: see the note in wandaa_bounds_trap.
+wandaa_result_trap:
+  push rbp
+  mov rbp, rsp
+  sub rsp, 48
+  push rbx
+  push r12
+
+  mov rbx, rcx
+
+  lea rcx, [rip+wandaa_res_pfx]
+  mov edx, OFFSET wandaa_res_pfx_len
+  call wandaa_print_str
+
+  cmp rbx, 0
+  je wandaa_rt_nomsg
+  mov rcx, rbx
+  mov rdx, [rbx-8]                  # the string's own length header
+  call wandaa_print_str
+wandaa_rt_nomsg:
+
+  lea rcx, [rip+wandaa_res_line]
+  mov edx, OFFSET wandaa_res_line_len
+  call wandaa_print_str
+  mov rcx, [rip+wandaa_current_line]
+  call wandaa_print_int             # ends the line
+
+  mov ecx, 1
+  sub rsp, 32
+  call qword ptr [rip+__imp_ExitProcess]
+  hlt
+
+# ========================== wandaa_misuse_trap() =============================
+#  ikosa() asked for the error of a result that succeeded. That is a bug in the
+#  program rather than a failure it should handle, so it stops the same way.
+wandaa_misuse_trap:
+  push rbp
+  mov rbp, rsp
+  sub rsp, 48
+  push rbx
+  push r12
+
+  lea rcx, [rip+wandaa_res_pfx]
+  mov edx, OFFSET wandaa_res_pfx_len
+  call wandaa_print_str
+  lea rcx, [rip+wandaa_res_misuse]
+  mov edx, OFFSET wandaa_res_misuse_len
+  call wandaa_print_str
+  lea rcx, [rip+wandaa_res_line]
+  mov edx, OFFSET wandaa_res_line_len
+  call wandaa_print_str
+  mov rcx, [rip+wandaa_current_line]
+  call wandaa_print_int
+
+  mov ecx, 1
+  sub rsp, 32
+  call qword ptr [rip+__imp_ExitProcess]
+  hlt
+
+# ======================== wandaa_print_result(r) ============================
+#  andika() on a result. A failure prints its message; a success prints only
+#  "byakunze", because the payload's type is not known at runtime -- there are
+#  no generics yet, so nothing says whether those 8 bytes are an integer, a
+#  float's bits or a pointer. Guessing would print convincing nonsense.
+wandaa_print_result:
+  push rbp
+  mov rbp, rsp
+  sub rsp, 48
+  push rbx
+  push r12
+
+  mov rbx, rcx
+  mov rax, [rbx]                    # slot 0 is the tag
+  cmp rax, 0
+  je wandaa_pr_err
+
+  lea rcx, [rip+wandaa_res_ok_tag]
+  mov edx, OFFSET wandaa_res_ok_tag_len
+  call wandaa_print_str
+  jmp wandaa_pr_done
+
+wandaa_pr_err:
+  lea rcx, [rip+wandaa_res_err_tag]
+  mov edx, OFFSET wandaa_res_err_tag_len
+  call wandaa_print_str
+  mov rcx, [rbx+8]                  # slot 1 is the message
+  cmp rcx, 0
+  je wandaa_pr_nl
+  mov rdx, [rcx-8]
+  call wandaa_print_str
+wandaa_pr_nl:
+  lea rcx, [rip+wandaa_nl_char]
+  mov edx, 1
+  call wandaa_print_str
+
+wandaa_pr_done:
+  pop r12
+  pop rbx
+  add rsp, 48
+  pop rbp
+  ret
 
 # ================================ _start ====================================
 _start:
