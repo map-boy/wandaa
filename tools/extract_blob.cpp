@@ -274,7 +274,8 @@ int main(int argc, char** argv) {
                                  "wandaa_int_to_str", "wandaa_str_to_int", "wandaa_array_new",
                                  "wandaa_print_float", "wandaa_bounds_trap",
                                  "wandaa_result_trap", "wandaa_misuse_trap", "wandaa_free",
-                                 "wandaa_array_push",
+                                 "wandaa_array_push", "wandaa_map_new", "wandaa_map_put",
+                                 "wandaa_map_get", "wandaa_map_has",
                                  "wandaa_print_result",
                                  "wandaa_current_line", "wandaa_empty_str"}) {
         if (!labels.count(required))

@@ -51,6 +51,10 @@
 .globl wandaa_print_result
 .globl wandaa_free
 .globl wandaa_array_push
+.globl wandaa_map_new
+.globl wandaa_map_put
+.globl wandaa_map_get
+.globl wandaa_map_has
 .globl wandaa_read_file
 .globl wandaa_write_file
 .globl wandaa_append_file
@@ -1132,6 +1136,265 @@ wandaa_pr_done:
   pop r12
   pop rbx
   add rsp, 48
+  pop rbp
+  ret
+
+# =============================== inkoranya ==================================
+#  A map from string keys to 8-byte values: open addressing, linear probing,
+#  FNV-1a over the key bytes, and a power-of-two bucket count so the modulo is
+#  an AND. This is what a symbol table needs, and it is the last thing ROADMAP
+#  lists as blocking a compiler written in Wandaa.
+#
+#  The block reuses the same shape as every other heap value:
+#      [ptr-16] = bucket count (a power of two)
+#      [ptr-8]  = entries in use, so ubunini() reports something meaningful
+#      bucket i = [ptr + i*16] (key pointer, 0 when free) and [ptr + i*16 + 8]
+#
+#  Growing rehashes into a block with twice the buckets at a load factor of
+#  one half. As with array push, the old block is NOT freed: another variable
+#  may still point at it.
+
+# ---- wandaa_map_slot(m, k): internal ---------------------------------------
+#  Returns RAX = bucket index, RDX = 1 when the key is already there, 0 when
+#  RAX is the free bucket it belongs in.
+wandaa_map_slot:
+  push rbp
+  mov rbp, rsp
+  sub rsp, 64
+  push rbx
+  push r12
+  push r13
+  push r14
+
+  mov rbx, rcx                      # the map
+  mov r12, rdx                      # the key
+  mov r13, [rbx-16]                 # bucket count
+
+  # ---- FNV-1a over the key's bytes ----
+  mov rax, 0xcbf29ce484222325       # offset basis
+  mov r14, [r12-8]                  # key length
+  xor rcx, rcx
+wandaa_ms_hash:
+  cmp rcx, r14
+  jge wandaa_ms_hashed
+  movzx rdx, byte ptr [r12+rcx]
+  xor rax, rdx
+  mov rdx, 0x100000001b3            # prime
+  imul rax, rdx
+  inc rcx
+  jmp wandaa_ms_hash
+wandaa_ms_hashed:
+
+  mov rcx, r13
+  dec rcx
+  and rax, rcx                      # & (buckets - 1)
+  mov r14, rax                      # the probe index
+
+wandaa_ms_probe:
+  mov rax, r14
+  shl rax, 4
+  mov rcx, [rbx+rax]                # the key stored there
+  cmp rcx, 0
+  je wandaa_ms_empty
+  mov rdx, r12
+  sub rsp, 32
+  call wandaa_str_eq
+  add rsp, 32
+  cmp rax, 0
+  jne wandaa_ms_found
+  inc r14
+  mov rax, r13
+  dec rax
+  and r14, rax                      # wrap within the table
+  jmp wandaa_ms_probe
+
+wandaa_ms_found:
+  mov rax, r14
+  mov rdx, 1
+  jmp wandaa_ms_done
+wandaa_ms_empty:
+  mov rax, r14
+  xor rdx, rdx
+wandaa_ms_done:
+  pop r14
+  pop r13
+  pop r12
+  pop rbx
+  add rsp, 64
+  pop rbp
+  ret
+
+# ---- wandaa_map_new() ------------------------------------------------------
+wandaa_map_new:
+  push rbp
+  mov rbp, rsp
+  sub rsp, 64
+  push rbx
+  push r12
+
+  mov r12, 8                        # buckets to start with
+  sub rsp, 32
+  call qword ptr [rip+__imp_GetProcessHeap]
+  add rsp, 32
+  mov rcx, rax
+  mov rdx, 8                        # HEAP_ZERO_MEMORY: every bucket free
+  mov r8, r12
+  shl r8, 4
+  add r8, 16
+  sub rsp, 32
+  call qword ptr [rip+__imp_HeapAlloc]
+  add rsp, 32
+
+  mov rbx, rax
+  mov [rbx], r12                    # bucket count
+  mov qword ptr [rbx+8], 0          # entries
+  lea rax, [rbx+16]
+
+  pop r12
+  pop rbx
+  add rsp, 64
+  pop rbp
+  ret
+
+# ---- wandaa_map_put(m, k, v) -> the map to keep ----------------------------
+wandaa_map_put:
+  push rbp
+  mov rbp, rsp
+  sub rsp, 64
+  push rbx
+  push r12
+  push r13
+  push r14
+
+  mov rbx, rcx                      # map
+  mov r12, rdx                      # key
+  mov r13, r8                       # value
+
+  # ---- grow at a load factor of one half ----
+  mov rax, [rbx-8]
+  shl rax, 1
+  cmp rax, [rbx-16]
+  jl wandaa_mp_fits
+
+  mov r14, [rbx-16]
+  shl r14, 1                        # twice the buckets
+  sub rsp, 32
+  call qword ptr [rip+__imp_GetProcessHeap]
+  add rsp, 32
+  mov rcx, rax
+  mov rdx, 8
+  mov r8, r14
+  shl r8, 4
+  add r8, 16
+  sub rsp, 32
+  call qword ptr [rip+__imp_HeapAlloc]
+  add rsp, 32
+  add rax, 16
+  mov [rax-16], r14
+  mov qword ptr [rax-8], 0
+  mov [rbp-16], rax                 # the new table
+
+  xor r14, r14                      # reuse as the rehash index
+wandaa_mp_rehash:
+  cmp r14, [rbx-16]                 # over the OLD buckets
+  jge wandaa_mp_rehashed
+  mov rax, r14
+  shl rax, 4
+  mov rcx, [rbx+rax]
+  cmp rcx, 0
+  je wandaa_mp_rehash_next
+  mov [rbp-24], rcx                 # the key survives the call below
+  mov rdx, [rbx+rax+8]
+  mov [rbp-32], rdx                 # so does the value
+
+  mov rcx, [rbp-16]
+  mov rdx, [rbp-24]
+  sub rsp, 32
+  call wandaa_map_slot              # clobbers RDX with the found flag
+  add rsp, 32
+  shl rax, 4
+  mov rcx, [rbp-16]
+  mov rdx, [rbp-24]
+  mov [rcx+rax], rdx
+  mov rdx, [rbp-32]
+  mov [rcx+rax+8], rdx
+  mov rdx, [rcx-8]
+  inc rdx
+  mov [rcx-8], rdx
+wandaa_mp_rehash_next:
+  inc r14
+  jmp wandaa_mp_rehash
+wandaa_mp_rehashed:
+  mov rbx, [rbp-16]                 # the new table from here on
+
+wandaa_mp_fits:
+  mov rcx, rbx
+  mov rdx, r12
+  sub rsp, 32
+  call wandaa_map_slot
+  add rsp, 32
+  shl rax, 4
+  mov rcx, [rbx+rax]
+  cmp rcx, 0
+  jne wandaa_mp_store               # replacing a value: the count is unchanged
+  mov [rbx+rax], r12
+  mov rcx, [rbx-8]
+  inc rcx
+  mov [rbx-8], rcx
+wandaa_mp_store:
+  mov [rbx+rax+8], r13
+  mov rax, rbx
+
+  pop r14
+  pop r13
+  pop r12
+  pop rbx
+  add rsp, 64
+  pop rbp
+  ret
+
+# ---- wandaa_map_get(m, k) -> the value, or 0 when absent -------------------
+wandaa_map_get:
+  push rbp
+  mov rbp, rsp
+  sub rsp, 64
+  push rbx
+  push r12
+
+  mov rbx, rcx
+  sub rsp, 32
+  call wandaa_map_slot
+  add rsp, 32
+  cmp rdx, 0
+  je wandaa_mg_missing
+  shl rax, 4
+  mov rax, [rbx+rax+8]
+  jmp wandaa_mg_done
+wandaa_mg_missing:
+  xor rax, rax
+wandaa_mg_done:
+  pop r12
+  pop rbx
+  add rsp, 64
+  pop rbp
+  ret
+
+# ---- wandaa_map_has(m, k) -> 1 or 0 ----------------------------------------
+wandaa_map_has:
+  push rbp
+  mov rbp, rsp
+  sub rsp, 64
+  push rbx
+  push r12
+
+  sub rsp, 32
+  call wandaa_map_slot
+  add rsp, 32
+  mov rax, rdx
+
+  pop r12
+  pop rbx
+  add rsp, 64
   pop rbp
   ret
 

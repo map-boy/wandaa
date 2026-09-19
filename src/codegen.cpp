@@ -374,6 +374,9 @@ VType evalType(const NodePtr& n, const std::unordered_map<std::string,VType>& ty
         {"mu_mubare", VType::Int},
         {"urutonde",  VType::Arr},
         {"ongeraho",  VType::Arr},
+        {"inkoranya", VType::Arr},
+        {"shyiramo",  VType::Arr},
+        {"arimo",     VType::Int},
         {"byakunze",  VType::Result},
         {"byanze",    VType::Result},
         {"byarakunze",VType::Int},     // 1 or 0
@@ -1038,7 +1041,8 @@ struct Checker {
       {"ijambo",1},{"inyuguti",2},{"igice",3},{"mu_ijambo",1},{"mu_mubare",1},
       {"urutonde",1},{"mu_bice",1},{"mu_mubare_wuzuye",1},
       {"byakunze",1},{"byanze",1},{"byarakunze",1},{"agaciro",1},{"ikosa",1},
-      {"ongeraho",2}
+      {"ongeraho",2},
+      {"inkoranya",0},{"shyiramo",3},{"fata",2},{"arimo",2}
     };
     return m;
   }
@@ -1883,7 +1887,11 @@ struct Codegen {
       {"mu_ijambo", "wandaa_int_to_str"},  // number -> string
       {"mu_mubare", "wandaa_str_to_int"},  // string -> number
       {"urutonde",  "wandaa_array_new"},   // zero-filled array of n elements
-      {"ongeraho",  "wandaa_array_push"}   // append, returning the array to keep
+      {"ongeraho",  "wandaa_array_push"},  // append, returning the array to keep
+      {"inkoranya", "wandaa_map_new"},      // a new empty map
+      {"shyiramo",  "wandaa_map_put"},      // put, returning the map to keep
+      {"fata",      "wandaa_map_get"},      // get, or 0 when absent
+      {"arimo",     "wandaa_map_has"}       // is the key there?
     };
     // A name that is a variable in this frame rather than a declared function
     // is a closure. The closure block travels as a hidden first argument, so

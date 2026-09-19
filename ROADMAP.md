@@ -190,8 +190,8 @@ compiler contributor a Wandaa programmer.
 - Records — an AST is a tree of tagged nodes. **Done**
 - Growable arrays — **Done**: `ongeraho(a, x)` appends and returns the array,
   with capacity in a second header word and doubling growth
-- A map type — symbol tables. Still missing, and the main blocker left for
-  stage 2
+- A map type — **Done**: `inkoranya()` with `shyiramo` / `fata` / `arimo`,
+  open addressing over string keys, rehashing as it fills
 - String building that does not leak — the code generator produces a lot of it
 - File I/O — already present
 - Enough recursion depth for deeply nested expressions
@@ -201,11 +201,15 @@ compiler contributor a Wandaa programmer.
 | Stage | What | Status |
 |---|---|---|
 | 0 | The current C++ compiler | **Done** |
-| 1 | Phase 1 language features, so a compiler is writable | Planned |
+| 1 | Phase 1 language features, so a compiler is writable | **Prerequisites met** |
 | 2 | `compiler/*.waa` — lexer, parser, codegen in Wandaa | Planned |
 | 3 | Compile stage 2 with stage 0 → `wandaac-s1.exe` | Planned |
 | 4 | Compile stage 2 with `wandaac-s1.exe` → `wandaac-s2.exe` | Planned |
 | 5 | **Assert `wandaac-s1.exe` and `wandaac-s2.exe` are byte-identical** | Planned |
+
+Every feature listed above as required now exists. That is not the same as
+having proved a compiler is writable in Wandaa — only stage 2 proves that, by
+being written — so stage 1 says "prerequisites met" rather than "done".
 
 Stage 5 is the classic bootstrap fixpoint proof: a compiler that compiles
 itself to the same bytes twice is consistent. It becomes a CI job.

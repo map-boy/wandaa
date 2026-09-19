@@ -1,0 +1,59 @@
+# Inkoranya -- a map from string keys to values. Open addressing with linear
+# probing and a power-of-two bucket count, rehashing at a load factor of one
+# half. This is what a symbol table needs.
+#
+# `shyiramo` RETURNS the map to use from now on, like `ongeraho`, because
+# growing it moves it:
+#
+#     m = shyiramo(m, k, v);
+
+reka m = inkoranya();
+andika(ubunini(m));
+
+m = shyiramo(m, "izina", 42);
+m = shyiramo(m, "indi", 7);
+andika(fata(m, "izina"));
+andika(fata(m, "indi"));
+andika(ubunini(m));
+
+# A key that is not there reads back as 0, and `arimo` is how you tell that
+# apart from a value that really is 0.
+andika(fata(m, "ntayo"));
+andika(arimo(m, "izina"));
+andika(arimo(m, "ntayo"));
+
+m = shyiramo(m, "zeru", 0);
+andika(fata(m, "zeru"));
+andika(arimo(m, "zeru"));
+
+# Putting the same key again replaces the value and does not grow the count.
+m = shyiramo(m, "izina", 99);
+andika(fata(m, "izina"));
+andika(ubunini(m));
+
+# Values keep their type.
+reka n = inkoranya();
+n = shyiramo(n, "a", "agaciro");
+reka v: ijambo = fata(n, "a");
+andika(v + "!");
+
+# Enough entries to force several rehashes: 8 buckets to begin with, so this
+# doubles six times over.
+reka big = inkoranya();
+reka i = 0;
+mugihe (i < 500) { big = shyiramo(big, "k" + mu_ijambo(i), i * 2); i = i + 1; }
+andika(ubunini(big));
+andika(fata(big, "k0"));
+andika(fata(big, "k123"));
+andika(fata(big, "k499"));
+andika(arimo(big, "k250"));
+andika(arimo(big, "k500"));
+
+# Every key still resolves to its own value after all that rehashing.
+reka byose = 1;
+reka j = 0;
+mugihe (j < 500) {
+  niba (fata(big, "k" + mu_ijambo(j)) != j * 2) { byose = 0; }
+  j = j + 1;
+}
+andika(byose);

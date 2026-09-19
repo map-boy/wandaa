@@ -549,6 +549,47 @@ Ibigomba kumenyekana — the limits, and they are real:
 
 ---
 
+## 8c. Inkoranya — Maps
+
+Inkoranya ihuza **ijambo** n'agaciro. A map from string keys to values:
+
+```wandaa
+reka m = inkoranya();
+m = shyiramo(m, "izina", 42);
+andika(fata(m, "izina"));      # 42
+andika(ubunini(m));            # 1
+```
+
+`shyiramo` isubiza inkoranya yo gukoresha guhera ubu, nka `ongeraho`, kuko
+kwagura biyimura. `shyiramo` returns the map to use from now on, exactly like
+`ongeraho`, because growing it moves it. Always write the assignment.
+
+| Umurimo | Icyo ukora |
+|---|---|
+| `inkoranya()` | inkoranya nshya, irimo ubusa |
+| `shyiramo(m, k, v)` | shyiramo `v` kuri `k`, isubize inkoranya |
+| `fata(m, k)` | agaciro kari kuri `k`, cyangwa 0 iyo kadahari |
+| `arimo(m, k)` | 1 iyo `k` ihari, 0 iyo itahari |
+| `ubunini(m)` | umubare w'ibyashyizwemo |
+
+`fata` isubiza 0 iyo urufunguzo rutabonetse, bityo koresha `arimo` kugira ngo
+umenye itandukaniro n'agaciro ari 0 koko. `fata` returns 0 for a missing key,
+so use `arimo` to tell that apart from a value that really is 0:
+
+```wandaa
+m = shyiramo(m, "zeru", 0);
+andika(fata(m, "zeru"));       # 0
+andika(arimo(m, "zeru"));      # 1
+```
+
+Uko bikorwa imbere: open addressing, linear probing, FNV-1a ku bice by'ijambo,
+n'umubare w'utwobo ari imbaraga za 2. Internally: open addressing with linear
+probing, FNV-1a over the key bytes, and a power-of-two bucket count so the
+modulo is a bitwise AND. It rehashes into twice as many buckets at a load
+factor of one half, and as with `ongeraho` the old table is not freed.
+
+---
+
 ## 9. Ibikorwa fatizo — Builtins
 
 | Umurimo | Icyo ukora |
@@ -563,6 +604,7 @@ Ibigomba kumenyekana — the limits, and they are real:
 | `mu_mubare_wuzuye(x)` | f64 → integer, truncating toward zero |
 | `urutonde(n)` | new zero-filled array of n elements |
 | `ongeraho(a, x)` | append x, returning the array to keep — reba igice cya 8 |
+| `inkoranya()` / `shyiramo` / `fata` / `arimo` | inkoranya (map) — reba igice cya 8c |
 | `ijambo(p)` | raw NUL-terminated pointer → Wandaa string |
 | `soma(dosiye)` | read a whole file as a string |
 | `andikamo(dosiye, ibirimo)` | write a string to a file |
