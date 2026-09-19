@@ -1,0 +1,77 @@
+# Kugarura umwanya -- memory reclamation, step one.
+#
+# A local is freed only when the compiler can PROVE two things: every value it
+# ever held was a fresh allocation, and the value never left the variable.
+# Anything unprovable is left alone, so the failure mode is a leak and never a
+# freed object that is still in use.
+#
+# This test does not look at addresses directly -- they are not stable across
+# runs -- it counts how many DISTINCT addresses a loop hands out. A loop whose
+# block is reclaimed reuses the same small set forever.
+
+# `a` never escapes: its only mention is as an argument to mu_ijambo, which
+# reads its value and keeps nothing. So it is freed each time round, and the
+# allocator hands the same storage back. Two addresses are in play rather than
+# one because the replacement is allocated before the old one is released.
+reka a1 = "";
+reka a2 = "";
+reka nshya = 0;
+reka i = 0;
+mugihe (i < 200) {
+  reka a = urutonde(500);
+  reka addr = mu_ijambo(a);
+  niba (addr != a1) {
+    niba (addr != a2) {
+      nshya = nshya + 1;
+      a2 = a1;
+      a1 = addr;
+    }
+  }
+  i = i + 1;
+}
+# A BOUND, not an exact count: how many addresses are in flight depends on the
+# allocator, and this has to hold on any of them. Without reclamation this is
+# 200; with it, a handful.
+andika(nshya < 20);
+
+# The same loop with the block stored somewhere else. The analysis must refuse
+# to free it, so the addresses keep moving and the count keeps climbing.
+reka b1 = "";
+reka b2 = "";
+reka nshya2 = 0;
+reka bika = 0;
+reka j = 0;
+mugihe (j < 200) {
+  reka b = urutonde(500);
+  reka addr2 = mu_ijambo(b);
+  bika = b;
+  niba (addr2 != b1) {
+    niba (addr2 != b2) {
+      nshya2 = nshya2 + 1;
+      b2 = b1;
+      b1 = addr2;
+    }
+  }
+  j = j + 1;
+}
+andika(nshya2 > 2);
+
+# Correctness under freeing: the replacement is built OUT OF the old value, so
+# the old one must not be released until the new one exists.
+reka s = mu_ijambo(0);
+reka k = 0;
+mugihe (k < 5) { s = s + mu_ijambo(k); k = k + 1; }
+andika(s);
+
+# A variable holding a string LITERAL is never freed: literals live in the
+# image, not on the heap, and releasing one would corrupt it.
+reka lit = "ntihindurwa";
+reka m = 0;
+mugihe (m < 3) { andika(lit); m = m + 1; }
+
+# Arrays whose elements are still reachable keep working.
+reka bose = urutonde(3);
+bose[0] = 10;
+bose[1] = 20;
+bose[2] = 30;
+andika(bose[0] + bose[1] + bose[2]);

@@ -587,6 +587,52 @@ included once, and an import cycle is an error.
 
 ---
 
+## 11b. Kugarura umwanya — Memory
+
+Wandaa ntisaba gusohora umwanya wa heap. Compiler isohora ibyo ishobora
+KWEMEZA ko byapfuye; ibindi bisigara.
+
+Wandaa has no free. The compiler releases what it can **prove** is dead, and
+leaves everything else alone.
+
+A local is released when both hold:
+
+- buri gaciro cyayo cyari **umwanya mushya** (`urutonde(n)`, `[...]`, guhuza
+  amagambo, `byakunze(...)`, umurimo utagira izina) -- every value it held was
+  a fresh allocation, never a string literal and never another function's
+  return value;
+- kandi ntiyigeze isohoka -- the value never left the variable: not assigned to
+  another name, not returned, not put in an array, a record, a result or a
+  closure, and not passed to anything that might keep it.
+
+Iyo byemejwe, isohorwa iyo isimbuwe no ku musozo w'umurimo. Bivuze ko loop
+isubiramo umwanya umwe aho kugenda yiyongera:
+
+```wandaa
+reka i = 0;
+mugihe (i < 100000) {
+  reka ubutumwa = "umukiriya " + mu_ijambo(i);   # isohorwa buri gihe
+  andikamo("log.txt", ubutumwa);
+  i = i + 1;
+}
+```
+
+Ibigomba kumenyekana — what this does NOT do, stated plainly:
+
+- **Nta reference counting.** Iyo compiler idashobora kwemeza, ntisohora --
+  bityo ikibazo ni ko umwanya usigara, si ukoresha umwanya wasohowe. If the
+  compiler cannot prove it, nothing is freed. The failure mode is a leak, never
+  a use-after-free, and that is deliberate: full refcounting would have to know
+  which of a block's 8-byte slots are pointers, and a slot whose type was never
+  worked out would be decremented as if it were one.
+- **Nta kwinjira mu bice.** Gusohora urutonde ntibisohora ibirimo, bityo
+  urutonde rw'amagambo rusiga amagambo. Freeing a block does not free what it
+  contains, so an array of strings leaves the strings behind. That is also why
+  an element read out of an array stays valid after the array is gone.
+- Ibi biri muri [ROADMAP.md](../ROADMAP.md) nk'intambwe ya mbere.
+
+---
+
 ## 12. Amakosa — Errors
 
 Amakosa yo mu gihe cyo gukora (division by zero, bad memory access) afatwa na

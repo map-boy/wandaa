@@ -40,6 +40,7 @@
 #include "../include/x64asm.hpp"
 #include "../include/runtime_blob.hpp"
 
+#include <algorithm>
 #include <cstring>
 #include <fstream>
 #include <set>
@@ -687,6 +688,135 @@ void inferPass(const NodePtr& n, std::unordered_map<std::string,VType>& types,
 }
 
 // ===========================================================================
+//  Memory reclamation, step one
+//
+//  Wandaa freed nothing at all. For a script that is fine; for a server it is
+//  not, because a loop that builds one string per request grows without bound.
+//
+//  Full reference counting is what the ROADMAP wants eventually, and it is NOT
+//  what this is. Refcounting needs to know which of a block's 8-byte slots are
+//  pointers, and `Int` is still the inference fallback, so a slot whose type
+//  was never worked out would be decremented as if it were a pointer. The
+//  failure mode of getting that wrong is a freed object that is still in use:
+//  silent corruption, which is far worse than the leak it replaces.
+//
+//  So this step proves instead of guessing. A local is freed only when the
+//  compiler can show that every value it ever held was a FRESH allocation and
+//  that the value never left the variable. Anything unprovable is left exactly
+//  as it is today. The failure mode is therefore a leak, never a use-after-free.
+// ===========================================================================
+
+// Expressions that always hand back a newly allocated block. A string LITERAL
+// is deliberately absent: it lives in the data area, and freeing it would
+// corrupt the image. So is a call to a user function, which may well return
+// something it also kept.
+bool isFreshAlloc(const NodePtr& n, const std::unordered_map<std::string,VType>& types){
+  if(!n) return false;
+  switch(n->type){
+    case NT::ArrayLit: case NT::RecordLit: case NT::Lambda: return true;
+    case NT::Bin:
+      // Concatenation builds a new string; every other operator is arithmetic.
+      return n->sval=="+" && evalType(n, types)==VType::Str;
+    case NT::Call: {
+      static const std::set<std::string> kFresh = {
+        "urutonde", "igice", "mu_ijambo", "soma", "ijambo", "byakunze", "byanze"
+      };
+      if(g_declaredFns.count(n->sval)) return false;   // a user function shadowing one
+      return kFresh.count(n->sval) > 0;
+    }
+    default: return false;
+  }
+}
+
+// Every name mentioned anywhere below n. Used where a whole subtree is unsafe,
+// so that nothing in it can be freed.
+void mentionAll(const NodePtr& n, std::set<std::string>& out){
+  if(!n) return;
+  if(n->type==NT::Var || n->type==NT::Assign || n->type==NT::Call) out.insert(n->sval);
+  for(auto& k : n->kids) mentionAll(k, out);
+}
+
+// Names whose value might outlive the variable, or be reachable through
+// something else. The list below is of the positions that are SAFE; a mention
+// anywhere else disqualifies the name, so anything this walk does not
+// understand is conservatively kept.
+void scanEscapes(const NodePtr& n, std::set<std::string>& bad){
+  if(!n) return;
+  switch(n->type){
+    case NT::VarDecl:
+    case NT::Assign:
+      // `reka x = v;` and `x = v;` make a second name for the same block.
+      if(!n->kids.empty()){
+        if(n->kids[0]->type==NT::Var) bad.insert(n->kids[0]->sval);
+        scanEscapes(n->kids[0], bad);
+      }
+      return;
+    case NT::Return:
+      for(auto& k : n->kids) mentionAll(k, bad);      // handed to the caller
+      return;
+    case NT::ArrayLit:
+    case NT::RecordLit:
+      // The block keeps whatever it is built from.
+      for(auto& k : n->kids){
+        if(k->type==NT::Var) bad.insert(k->sval);
+        scanEscapes(k, bad);
+      }
+      return;
+    case NT::AddrOf:
+      if(!n->kids.empty() && n->kids[0]->type==NT::Var) bad.insert(n->kids[0]->sval);
+      return;
+    case NT::Lambda:
+      mentionAll(n, bad);                             // captures are copied into the block
+      return;
+    case NT::IndexAssign:                             // base, index, VALUE
+      if(n->kids.size() > 2 && n->kids[2]->type==NT::Var) bad.insert(n->kids[2]->sval);
+      for(auto& k : n->kids) scanEscapes(k, bad);
+      return;
+    case NT::FieldAssign:                             // base, VALUE
+      if(n->kids.size() > 1 && n->kids[1]->type==NT::Var) bad.insert(n->kids[1]->sval);
+      for(auto& k : n->kids) scanEscapes(k, bad);
+      return;
+    case NT::Call: {
+      // Builtins that read their argument and keep nothing. Everything else --
+      // including every user function, whose body this walk is not looking at
+      // -- is assumed to keep what it is given.
+      static const std::set<std::string> kBorrows = {
+        "uburebure", "ubunini", "inyuguti", "igice", "mu_mubare",
+        "mu_bice", "mu_mubare_wuzuye", "andikamo", "ongeramo", "byarakunze",
+        // These also RETURN a fresh block, which is a separate question from
+        // whether they keep what they were given. They do not.
+        "mu_ijambo", "soma", "ijambo",
+        // agaciro/ikosa hand back what is inside a result. That value is not
+        // freed when the result is -- nothing here ever recurses into a block
+        // -- so reading it does not make the result escape.
+        "agaciro", "ikosa"
+      };
+      if(kBorrows.count(n->sval) && !g_declaredFns.count(n->sval))
+        for(auto& k : n->kids) scanEscapes(k, bad);
+      else
+        for(auto& k : n->kids) mentionAll(k, bad);
+      return;
+    }
+    default:
+      for(auto& k : n->kids) scanEscapes(k, bad);
+  }
+}
+
+// A name is freeable only if EVERY value assigned to it is a fresh allocation.
+void scanAssignments(const NodePtr& n, const std::unordered_map<std::string,VType>& types,
+                     std::map<std::string,bool>& ok){
+  if(!n) return;
+  if(n->type==NT::FuncDecl || n->type==NT::Lambda) return;   // a separate frame
+  if((n->type==NT::VarDecl || n->type==NT::Assign) && !n->kids.empty()){
+    const bool fresh = isFreshAlloc(n->kids[0], types);
+    auto it = ok.find(n->sval);
+    if(it == ok.end()) ok[n->sval] = fresh;
+    else                it->second = it->second && fresh;
+  }
+  for(auto& k : n->kids) scanAssignments(k, types, ok);
+}
+
+// ===========================================================================
 //  Closure lifting
 //
 //  An anonymous `umurimo` becomes an ordinary top-level function plus a heap
@@ -1069,6 +1199,8 @@ struct Codegen {
   int labelCounter = 0;
   std::string epilogue;
   std::string curFnName;
+  // Locals this function may free: see "Memory reclamation, step one".
+  std::set<std::string> freeable;
   // Every name a Call can refer to that is NOT a closure held in a variable.
   std::set<std::string> callables;
   std::unordered_map<std::string,std::vector<VType>> fnParamTypes;
@@ -1556,8 +1688,7 @@ struct Codegen {
         }
         break;
       case NT::Assign:
-        genExpr(n->kids[0]);
-        a.mov_store_rbp(-curOffset(n->sval), X64Asm::RAX);
+        storeToLocal(n);
         break;
       case NT::Bin: {
         // Short-circuit operators: the right side must not be evaluated when
@@ -1794,6 +1925,24 @@ struct Codegen {
     }
   }
 
+  // Store into a local, first releasing whatever the slot held when this is a
+  // local this frame owns.
+  //
+  // The new value is computed BEFORE the old one is freed, because the new one
+  // is often built out of the old: `s = s + "x"` reads the existing string to
+  // make the new one, and freeing first would read freed memory.
+  void storeToLocal(const NodePtr& n){
+    genExpr(n->kids[0]);
+    const int slot = -curOffset(n->sval);
+    if(freeable.count(n->sval)){
+      pushTmp(X64Asm::RAX);
+      a.mov_load_rbp(X64Asm::RCX, slot);
+      callRuntime("wandaa_free");
+      popTmp(X64Asm::RAX);
+    }
+    a.mov_store_rbp(slot, X64Asm::RAX);
+  }
+
   void genStmt(const NodePtr& n){
     // Line tracking for the crash handler. wandaa_current_line is an 8-byte
     // slot inside the runtime blob's data region, reached RIP-relatively --
@@ -1802,8 +1951,7 @@ struct Codegen {
 
     switch(n->type){
       case NT::VarDecl:
-        genExpr(n->kids[0]);
-        a.mov_store_rbp(-curOffset(n->sval), X64Asm::RAX);
+        storeToLocal(n);
         break;
       case NT::ExprStmt: genExpr(n->kids[0]); break;
       case NT::Print:    genPrint(n); break;
@@ -1932,6 +2080,30 @@ struct Codegen {
     // declared LATER in the file does not see it -- the same ordering limit
     // g_fnArrElemTypes has.
     findResultReturnType(body, name, fi.types);
+
+    // Which locals this function is allowed to free. Everything here is a
+    // proof, not a guess: the name is a local of this frame, every value ever
+    // assigned to it was a fresh allocation, and it never appears anywhere
+    // that could keep or alias it.
+    freeable.clear();
+    {
+      std::set<std::string> bad;
+      scanEscapes(body, bad);
+      std::map<std::string,bool> fresh;
+      scanAssignments(body, fi.types, fresh);
+      std::vector<std::string> locals;
+      collectNames(body, locals);
+      for(const auto& l : locals){
+        if(bad.count(l)) continue;
+        if(std::find(params.begin(), params.end(), l) != params.end()) continue;  // the caller owns it
+        if(caps && std::find(caps->begin(), caps->end(), l) != caps->end()) continue;
+        auto f = fresh.find(l);
+        if(f == fresh.end() || !f->second) continue;
+        if(!fi.offset.count(l)) continue;
+        freeable.insert(l);
+      }
+    }
+
     cur = &fi;
     epilogue = name + "_epilogue";
     curFnName = name;
@@ -1980,10 +2152,35 @@ struct Codegen {
       }
     }
 
+    // Zero every slot that will be freed. A `reka` inside a branch that never
+    // runs would otherwise leave garbage in the slot, and the epilogue would
+    // hand that garbage to HeapFree.
+    if(!freeable.empty()){
+      a.xor_eax_eax();
+      for(const auto& l : freeable) a.mov_store_rbp(-fi.offset.at(l), X64Asm::RAX);
+    }
+
     genStmt(body);
 
     a.xor_eax_eax();
     a.defineLabel(epilogue);
+
+    // Free what this frame owns. The return value is already in RAX and
+    // wandaa_free clobbers it, so it is saved across them. RSP is whatever the
+    // jump here left it as, which is why the frees come before the restore
+    // below -- they only read through RBP.
+    if(!freeable.empty()){
+      const int savedSlots = stackSlots;
+      stackSlots = 0;
+      pushTmp(X64Asm::RAX);
+      for(const auto& l : freeable){
+        a.mov_load_rbp(X64Asm::RCX, -fi.offset.at(l));
+        callRuntime("wandaa_free");
+      }
+      popTmp(X64Asm::RAX);
+      stackSlots = savedSlots;
+    }
+
     // Restore RSP from RBP rather than adding the frame size back.
     //
     // `add rsp, frameSize` only undoes the frame, and that is not enough: a
