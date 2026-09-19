@@ -1,0 +1,95 @@
+# ===========================================================================
+#  compiler/parser.waa -- print the AST, for comparison with C++.
+#
+#  Stage 2b of the bootstrap in ROADMAP.md. The parser itself lives in
+#  compiler/isesengura.waa; this prints what it produced in exactly the
+#  format `wandaac --ast` prints, so the two can be diffed over the whole
+#  corpus. See compiler/verify_parser.sh.
+#
+#      waa compiler/parser.waa <dosiye.waa>
+# ===========================================================================
+
+injiza "isesengura.waa";
+
+umurimo huza(v: urutonde): ijambo {
+  reka bose: urutonde<ijambo> = v;
+  reka o = "";
+  reka i = 0;
+  mugihe (i < ubunini(bose)) {
+    niba (i > 0) { o = o + ","; }
+    o = o + bose[i];
+    i = i + 1;
+  }
+  tanga o;
+}
+
+umurimo huza_imibare(v: urutonde): ijambo {
+  reka o = "";
+  reka i = 0;
+  mugihe (i < ubunini(v)) {
+    niba (i > 0) { o = o + ","; }
+    o = o + mu_ijambo(v[i]);
+    i = i + 1;
+  }
+  tanga o;
+}
+
+umurimo hari_ubwoko(v: urutonde): umubare {
+  reka bose: urutonde<ijambo> = v;
+  reka i = 0;
+  mugihe (i < ubunini(bose)) {
+    niba (uburebure(bose[i]) > 0) { tanga 1; }
+    i = i + 1;
+  }
+  tanga 0;
+}
+
+umurimo erekana(n: Igice, urwego: umubare) {
+  reka mbere = "";
+  reka k = 0;
+  mugihe (k < urwego * 2) { mbere = mbere + " "; k = k + 1; }
+
+  reka o = mbere + n.ubwoko_bwacyo;
+  niba (uburebure(n.sval) > 0) { o = o + " s=" + sohora(n.sval); }
+  niba (uburebure(n.sval2) > 0) { o = o + " s2=" + sohora(n.sval2); }
+  niba (n.bval) { o = o + " b=1"; }
+  ubundi niba (n.ubwoko_bwacyo == "Bool") { o = o + " b=0"; }
+  niba (n.ni_ibice) { o = o + " f=1"; }
+  niba (ubunini(n.params) > 0) { o = o + " p=" + huza(n.params); }
+  niba (hari_ubwoko(n.paramTypes)) { o = o + " pt=" + huza(n.paramTypes); }
+  niba (uburebure(n.retType) > 0) { o = o + " r=" + n.retType; }
+  niba (ubunini(n.typeParams) > 0) { o = o + " tp=" + huza(n.typeParams); }
+  niba (ubunini(n.widths) > 0) { o = o + " w=" + huza_imibare(n.widths); }
+  niba (n.umurongo > 0) { o = o + " l=" + mu_ijambo(n.umurongo); }
+  andika(o);
+
+  reka ab: urutonde<Igice> = n.abana;
+  reka i = 0;
+  mugihe (i < ubunini(ab)) {
+    erekana(ab[i], urwego + 1);
+    i = i + 1;
+  }
+}
+
+reka inzira: ijambo = inzira_yatanzwe();
+reka amasoko: ijambo = soma(inzira);
+
+niba (uburebure(amasoko) == 0) {
+  andika("Ikosa: ntibashoboye gusoma " + inzira);
+}
+ubundi {
+  reka r = sesengura(amasoko);
+  niba (byarakunze(r)) {
+    reka bose: urutonde<Ikimenyetso> = agaciro(r);
+    reka igiti: Igice = sesengura_porogaramu(bose);
+    niba (igiti.ubwoko_bwacyo == "IKOSA") {
+      andika("Ikosa ryo gukusanya: " + igiti.sval);
+    }
+    ubundi {
+      erekana(igiti, 0);
+    }
+  }
+  ubundi {
+    andika("Ikosa ryo gukusanya: " + ikosa(r));
+  }
+}

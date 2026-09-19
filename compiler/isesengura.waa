@@ -1,0 +1,594 @@
+# ===========================================================================
+#  compiler/isesengura.waa -- the Wandaa parser, as a module.
+#
+#  Stage 2b of the bootstrap in ROADMAP.md. A transliteration of
+#  src/parser.cpp: the same recursive descent, the same precedence ladder,
+#  the same node shapes. It is checked by diffing its AST dump against
+#  `wandaac --ast` over the whole corpus.
+#
+#  Declarations only -- `injiza` runs a module's top-level statements.
+# ===========================================================================
+
+injiza "ibimenyetso.waa";
+
+# An AST node. `abana` are the children, in order.
+ubwoko Igice {
+  ubwoko_bwacyo: ijambo,
+  sval: ijambo,
+  sval2: ijambo,
+  bval: umubare,
+  ni_ibice: umubare,
+  abana: urutonde,
+  params: urutonde,
+  paramTypes: urutonde,
+  retType: ijambo,
+  typeParams: urutonde,
+  widths: urutonde,
+  umurongo: umubare
+}
+
+# Parser state. A record is a heap block, so passing it around and writing
+# through it is how the position advances -- Wandaa has no globals, and a
+# function cannot see a top-level `reka`.
+ubwoko Aho {
+  toks: urutonde,
+  i: umubare,
+  n: umubare,
+  ikosa_ryabaye: umubare,
+  ubutumwa: ijambo,
+  ubwoko_bwatangajwe: urutonde
+}
+
+umurimo igice_gishya(t: ijambo): Igice {
+  tanga Igice(t, "", "", 0, 0, urutonde(0), urutonde(0), urutonde(0), "",
+              urutonde(0), urutonde(0), 0);
+}
+
+umurimo ongeraho_umwana(p: Igice, c: Igice) {
+  p.abana = ongeraho(p.abana, c);
+}
+
+# ---- ibikoresho by'ibimenyetso -- token helpers ---------------------------
+umurimo ubu(st: Aho): Ikimenyetso {
+  niba (st.i < st.n) {
+    reka bose: urutonde<Ikimenyetso> = st.toks;
+    reka t: Ikimenyetso = bose[st.i];
+    tanga t;
+  }
+  tanga ikimenyetso("END", "", 0);
+}
+
+umurimo ubukurikira(st: Aho): Ikimenyetso {
+  niba (st.i + 1 < st.n) {
+    reka bose: urutonde<Ikimenyetso> = st.toks;
+    reka t: Ikimenyetso = bose[st.i + 1];
+    tanga t;
+  }
+  tanga ikimenyetso("END", "", 0);
+}
+
+umurimo ni(st: Aho, k: ijambo): umubare {
+  reka t: Ikimenyetso = ubu(st);
+  tanga t.ubwoko_bwacyo == k;
+}
+
+umurimo ni_ubukurikira(st: Aho, k: ijambo): umubare {
+  reka t: Ikimenyetso = ubukurikira(st);
+  tanga t.ubwoko_bwacyo == k;
+}
+
+umurimo imbere(st: Aho): Ikimenyetso {
+  reka t: Ikimenyetso = ubu(st);
+  st.i = st.i + 1;
+  tanga t;
+}
+
+umurimo bamenyeshe(st: Aho, ubutumwa: ijambo) {
+  niba (st.ikosa_ryabaye == 0) {
+    reka t: Ikimenyetso = ubu(st);
+    st.ikosa_ryabaye = 1;
+    st.ubutumwa = "Ikosa: " + ubutumwa + " ku murongo " + mu_ijambo(t.umurongo);
+  }
+}
+
+umurimo tegereza(st: Aho, k: ijambo, ubutumwa: ijambo): Ikimenyetso {
+  niba (ni(st, k)) { tanga imbere(st); }
+  bamenyeshe(st, ubutumwa);
+  tanga ikimenyetso("END", "", 0);
+}
+
+# ---- ubwoko bwanditswe -- a type in an annotation --------------------------
+umurimo ubwoko_bwandi(st: Aho): ijambo {
+  reka t: Ikimenyetso = tegereza(st, "IDENT", "izina ry'ubwoko");
+  reka o = t.inyandiko;
+  niba (ni(st, "LT")) {
+    reka x = imbere(st);
+    o = o + "<" + ubwoko_bwandi(st) + ">";
+    reka y = tegereza(st, "GT", "'>'");
+  }
+  tanga o;
+}
+
+umurimo igipimo_kimwe(st: Aho, n: Igice) {
+  reka t: Ikimenyetso = tegereza(st, "IDENT", "parameter");
+  n.params = ongeraho(n.params, t.inyandiko);
+  reka ubwoko_bwacyo = "";
+  niba (ni(st, "COLON")) {
+    reka x = imbere(st);
+    ubwoko_bwacyo = ubwoko_bwandi(st);
+  }
+  n.paramTypes = ongeraho(n.paramTypes, ubwoko_bwacyo);
+}
+
+# ---- ibisobanuro -- declarations ------------------------------------------
+umurimo ubwoko_decl(st: Aho): Igice {
+  reka x = imbere(st);                                  # ubwoko
+  reka n: Igice = igice_gishya("RecordDecl");
+  reka izina: Ikimenyetso = tegereza(st, "IDENT", "izina ry'ubwoko");
+  n.sval = izina.inyandiko;
+  reka y = tegereza(st, "LBRACE", "'{'");
+  niba (ni(st, "RBRACE") == 0) {
+    umwanya(st, n);
+    mugihe (ni(st, "COMMA")) { reka z = imbere(st); umwanya(st, n); }
+  }
+  reka w = tegereza(st, "RBRACE", "'}'");
+  st.ubwoko_bwatangajwe = shyiramo(st.ubwoko_bwatangajwe, n.sval, 1);
+  tanga n;
+}
+
+# A field: a NUMBER after ':' is a byte width, a NAME is a type.
+umurimo umwanya(st: Aho, n: Igice) {
+  reka f: Ikimenyetso = tegereza(st, "IDENT", "izina ry'umwanya");
+  n.params = ongeraho(n.params, f.inyandiko);
+  reka ubugari = 0;
+  reka ubwoko_bwacyo = "";
+  niba (ni(st, "COLON")) {
+    reka x = imbere(st);
+    niba (ni(st, "NUM")) {
+      reka u: Ikimenyetso = imbere(st);
+      ubugari = mu_mubare(u.inyandiko);
+    }
+    ubundi {
+      ubwoko_bwacyo = ubwoko_bwandi(st);
+    }
+  }
+  n.widths = ongeraho(n.widths, ubugari);
+  n.paramTypes = ongeraho(n.paramTypes, ubwoko_bwacyo);
+}
+
+umurimo hanze_decl(st: Aho): Igice {
+  reka x = imbere(st);                                  # hanze
+  reka n: Igice = igice_gishya("ExternDecl");
+  reka dll: Ikimenyetso = tegereza(st, "STR", "izina rya DLL nka \"kernel32.dll\"");
+  n.sval2 = dll.inyandiko;
+  reka izina: Ikimenyetso = tegereza(st, "IDENT", "izina ry'umurimo wo hanze");
+  n.sval = izina.inyandiko;
+  reka y = tegereza(st, "LPAREN", "'('");
+  niba (ni(st, "RPAREN") == 0) {
+    reka par1: Ikimenyetso = tegereza(st, "IDENT", "parameter");
+    n.params = ongeraho(n.params, par1.inyandiko);
+    mugihe (ni(st, "COMMA")) {
+      reka z = imbere(st);
+      reka q: Ikimenyetso = tegereza(st, "IDENT", "parameter");
+      n.params = ongeraho(n.params, q.inyandiko);
+    }
+  }
+  reka w = tegereza(st, "RPAREN", "')'");
+  reka v = tegereza(st, "SEMI", "';'");
+  tanga n;
+}
+
+umurimo injiza_decl(st: Aho): Igice {
+  reka x = imbere(st);                                  # injiza
+  reka n: Igice = igice_gishya("Block");
+  reka pth: Ikimenyetso = tegereza(st, "STR", "inzira ya dosiye");
+  n.sval = pth.inyandiko;
+  reka y = tegereza(st, "SEMI", "';'");
+  n.bval = 1;                                           # an unresolved import
+  tanga n;
+}
+
+umurimo reka_decl(st: Aho): Igice {
+  reka x = imbere(st);                                  # reka
+  reka izina: Ikimenyetso = tegereza(st, "IDENT", "izina ry'ikigereranyo");
+  reka bwanditswe = "";
+  niba (ni(st, "COLON")) {
+    reka y = imbere(st);
+    bwanditswe = ubwoko_bwandi(st);
+  }
+  reka z = tegereza(st, "EQ", "'='");
+  reka agaciro_ke: Igice = interuro(st);
+  reka w = tegereza(st, "SEMI", "';'");
+  reka n: Igice = igice_gishya("VarDecl");
+  n.sval = izina.inyandiko;
+  n.retType = bwanditswe;
+  ongeraho_umwana(n, agaciro_ke);
+  tanga n;
+}
+
+umurimo agace(st: Aho): Igice {
+  reka x = tegereza(st, "LBRACE", "twari dutegereje '{'");
+  reka n: Igice = igice_gishya("Block");
+  mugihe (ni(st, "RBRACE") == 0 na st.ikosa_ryabaye == 0) {
+    ongeraho_umwana(n, ibwiriza(st));
+  }
+  reka y = tegereza(st, "RBRACE", "twari dutegereje '}'");
+  tanga n;
+}
+
+umurimo niba_decl(st: Aho): Igice {
+  reka x = imbere(st);
+  reka y = tegereza(st, "LPAREN", "'('");
+  reka cond: Igice = interuro(st);
+  reka z = tegereza(st, "RPAREN", "')'");
+  reka thenB: Igice = agace(st);
+  reka n: Igice = igice_gishya("If");
+  ongeraho_umwana(n, cond);
+  ongeraho_umwana(n, thenB);
+  niba (ni(st, "UBUNDI")) {
+    reka w = imbere(st);
+    niba (ni(st, "NIBA")) { ongeraho_umwana(n, ibwiriza(st)); }
+    ubundi { ongeraho_umwana(n, agace(st)); }
+  }
+  tanga n;
+}
+
+umurimo mugihe_decl(st: Aho): Igice {
+  reka x = imbere(st);
+  reka y = tegereza(st, "LPAREN", "'('");
+  reka cond: Igice = interuro(st);
+  reka z = tegereza(st, "RPAREN", "')'");
+  reka body: Igice = agace(st);
+  reka n: Igice = igice_gishya("While");
+  ongeraho_umwana(n, cond);
+  ongeraho_umwana(n, body);
+  tanga n;
+}
+
+umurimo umurimo_decl(st: Aho): Igice {
+  reka x = imbere(st);                                  # umurimo
+  reka izina: Ikimenyetso = tegereza(st, "IDENT", "izina ry'umurimo");
+  reka n: Igice = igice_gishya("FuncDecl");
+  n.sval = izina.inyandiko;
+  niba (ni(st, "LT")) {
+    reka y = imbere(st);
+    reka t1: Ikimenyetso = tegereza(st, "IDENT", "izina ry'ubwoko rusange");
+    n.typeParams = ongeraho(n.typeParams, t1.inyandiko);
+    mugihe (ni(st, "COMMA")) {
+      reka z = imbere(st);
+      reka t2: Ikimenyetso = tegereza(st, "IDENT", "izina ry'ubwoko rusange");
+      n.typeParams = ongeraho(n.typeParams, t2.inyandiko);
+    }
+    reka w = tegereza(st, "GT", "'>'");
+  }
+  reka a = tegereza(st, "LPAREN", "'('");
+  niba (ni(st, "RPAREN") == 0) {
+    igipimo_kimwe(st, n);
+    mugihe (ni(st, "COMMA")) { reka b = imbere(st); igipimo_kimwe(st, n); }
+  }
+  reka c = tegereza(st, "RPAREN", "')'");
+  niba (ni(st, "COLON")) { reka d = imbere(st); n.retType = ubwoko_bwandi(st); }
+  ongeraho_umwana(n, agace(st));
+  tanga n;
+}
+
+umurimo umurimo_utagira_izina(st: Aho): Igice {
+  reka x = imbere(st);                                  # umurimo
+  reka y = tegereza(st, "LPAREN", "'('");
+  reka n: Igice = igice_gishya("Lambda");
+  niba (ni(st, "RPAREN") == 0) {
+    igipimo_kimwe(st, n);
+    mugihe (ni(st, "COMMA")) { reka b = imbere(st); igipimo_kimwe(st, n); }
+  }
+  reka c = tegereza(st, "RPAREN", "')'");
+  niba (ni(st, "COLON")) { reka d = imbere(st); n.retType = ubwoko_bwandi(st); }
+  ongeraho_umwana(n, agace(st));
+  tanga n;
+}
+
+umurimo tanga_decl(st: Aho): Igice {
+  reka x = imbere(st);
+  reka n: Igice = igice_gishya("Return");
+  niba (ni(st, "SEMI") == 0) { ongeraho_umwana(n, interuro(st)); }
+  reka y = tegereza(st, "SEMI", "';'");
+  tanga n;
+}
+
+umurimo andika_decl(st: Aho): Igice {
+  reka x = imbere(st);
+  reka y = tegereza(st, "LPAREN", "'('");
+  reka n: Igice = igice_gishya("Print");
+  niba (ni(st, "RPAREN") == 0) {
+    ongeraho_umwana(n, interuro(st));
+    mugihe (ni(st, "COMMA")) { reka z = imbere(st); ongeraho_umwana(n, interuro(st)); }
+  }
+  reka w = tegereza(st, "RPAREN", "')'");
+  reka v = tegereza(st, "SEMI", "';'");
+  tanga n;
+}
+
+# ---- amabwiriza -- statements ---------------------------------------------
+umurimo ibwiriza(st: Aho): Igice {
+  reka t: Ikimenyetso = ubu(st);
+  reka umurongo = t.umurongo;
+  reka n: Igice = igice_gishya("Block");
+
+  niba (ni(st, "REKA")) { n = reka_decl(st); }
+  ubundi niba (ni(st, "NIBA")) { n = niba_decl(st); }
+  ubundi niba (ni(st, "MUGIHE")) { n = mugihe_decl(st); }
+  # `umurimo izina(...)` declares; `umurimo (...)` with no name is an
+  # anonymous function, which is an expression and can start a statement.
+  ubundi niba (ni(st, "UMURIMO") na ni_ubukurikira(st, "LPAREN") == 0) {
+    n = umurimo_decl(st);
+  }
+  ubundi niba (ni(st, "TANGA")) { n = tanga_decl(st); }
+  ubundi niba (ni(st, "ANDIKA")) { n = andika_decl(st); }
+  ubundi niba (ni(st, "HANZE")) { n = hanze_decl(st); }
+  ubundi niba (ni(st, "INJIZA")) { n = injiza_decl(st); }
+  ubundi niba (ni(st, "UBWOKO")) { n = ubwoko_decl(st); }
+  ubundi niba (ni(st, "HAGARIKA")) {
+    reka x = imbere(st);
+    reka y = tegereza(st, "SEMI", "';'");
+    n = igice_gishya("Break");
+  }
+  ubundi niba (ni(st, "KOMEZA")) {
+    reka x = imbere(st);
+    reka y = tegereza(st, "SEMI", "';'");
+    n = igice_gishya("Continue");
+  }
+  ubundi niba (ni(st, "LBRACE")) { n = agace(st); }
+  ubundi {
+    reka e: Igice = interuro(st);
+    reka y = tegereza(st, "SEMI", "twari dutegereje ';'");
+    n = igice_gishya("ExprStmt");
+    ongeraho_umwana(n, e);
+  }
+  n.umurongo = umurongo;
+  tanga n;
+}
+
+# ---- imvugo -- expressions -------------------------------------------------
+umurimo interuro(st: Aho): Igice { tanga gushyiraho(st); }
+
+umurimo gushyiraho(st: Aho): Igice {
+  reka left: Igice = cyangwa_yo(st);
+  niba (ni(st, "EQ")) {
+    reka x = imbere(st);
+    reka val: Igice = gushyiraho(st);
+    niba (left.ubwoko_bwacyo == "Var") {
+      reka n: Igice = igice_gishya("Assign");
+      n.sval = left.sval;
+      ongeraho_umwana(n, val);
+      tanga n;
+    }
+    niba (left.ubwoko_bwacyo == "Index") {
+      reka n: Igice = igice_gishya("IndexAssign");
+      reka ab: urutonde<Igice> = left.abana;
+      ongeraho_umwana(n, ab[0]);
+      ongeraho_umwana(n, ab[1]);
+      ongeraho_umwana(n, val);
+      tanga n;
+    }
+    niba (left.ubwoko_bwacyo == "FieldAccess") {
+      reka n: Igice = igice_gishya("FieldAssign");
+      n.sval = left.sval;
+      reka ab: urutonde<Igice> = left.abana;
+      ongeraho_umwana(n, ab[0]);
+      ongeraho_umwana(n, val);
+      tanga n;
+    }
+    bamenyeshe(st, "aho ushyira agaciro ntibyemewe");
+  }
+  tanga left;
+}
+
+umurimo bin(op: ijambo, l: Igice, r: Igice): Igice {
+  reka b: Igice = igice_gishya("Bin");
+  b.sval = op;
+  ongeraho_umwana(b, l);
+  ongeraho_umwana(b, r);
+  tanga b;
+}
+
+umurimo cyangwa_yo(st: Aho): Igice {
+  reka n: Igice = na_yo(st);
+  mugihe (ni(st, "CYANGWA") cyangwa ni(st, "OROR")) {
+    reka x = imbere(st);
+    n = bin("||", n, na_yo(st));
+  }
+  tanga n;
+}
+
+umurimo na_yo(st: Aho): Igice {
+  reka n: Igice = kungana(st);
+  mugihe (ni(st, "NA") cyangwa ni(st, "ANDAND")) {
+    reka x = imbere(st);
+    n = bin("&&", n, kungana(st));
+  }
+  tanga n;
+}
+
+umurimo kungana(st: Aho): Igice {
+  reka n: Igice = kugereranya(st);
+  mugihe (ni(st, "EQEQ") cyangwa ni(st, "NEQ")) {
+    reka o: Ikimenyetso = imbere(st);
+    n = bin(o.inyandiko, n, kugereranya(st));
+  }
+  tanga n;
+}
+
+umurimo kugereranya(st: Aho): Igice {
+  reka n: Igice = guteranya(st);
+  mugihe (ni(st, "LT") cyangwa ni(st, "GT") cyangwa ni(st, "LE") cyangwa ni(st, "GE")) {
+    reka o: Ikimenyetso = imbere(st);
+    n = bin(o.inyandiko, n, guteranya(st));
+  }
+  tanga n;
+}
+
+umurimo guteranya(st: Aho): Igice {
+  reka n: Igice = gukuba(st);
+  mugihe (ni(st, "PLUS") cyangwa ni(st, "MINUS")) {
+    reka o: Ikimenyetso = imbere(st);
+    n = bin(o.inyandiko, n, gukuba(st));
+  }
+  tanga n;
+}
+
+umurimo gukuba(st: Aho): Igice {
+  reka n: Igice = kimwe(st);
+  mugihe (ni(st, "STAR") cyangwa ni(st, "SLASH")) {
+    reka o: Ikimenyetso = imbere(st);
+    n = bin(o.inyandiko, n, kimwe(st));
+  }
+  tanga n;
+}
+
+umurimo kimwe(st: Aho): Igice {
+  # &x -- only a plain variable has an address to take.
+  niba (ni(st, "AMP")) {
+    reka t: Ikimenyetso = ubu(st);
+    reka umurongo = t.umurongo;
+    reka x = imbere(st);
+    reka izina: Ikimenyetso = tegereza(st, "IDENT", "izina ry'ikigereranyo nyuma ya '&'");
+    reka n: Igice = igice_gishya("AddrOf");
+    n.sval = izina.inyandiko;
+    n.umurongo = umurongo;
+    tanga n;
+  }
+  niba (ni(st, "SI") cyangwa ni(st, "BANG")) {
+    reka x = imbere(st);
+    reka n: Igice = igice_gishya("Un");
+    n.sval = "!";
+    ongeraho_umwana(n, kimwe(st));
+    tanga n;
+  }
+  niba (ni(st, "MINUS")) {
+    reka x = imbere(st);
+    reka n: Igice = igice_gishya("Un");
+    n.sval = "-";
+    ongeraho_umwana(n, kimwe(st));
+    tanga n;
+  }
+  tanga guhamagara(st);
+}
+
+umurimo guhamagara(st: Aho): Igice {
+  reka n: Igice = ibanze(st);
+  niba (n.ubwoko_bwacyo == "Var" na ni(st, "LPAREN")) {
+    reka x = imbere(st);
+    reka c: Igice = igice_gishya("Call");
+    niba (arimo(st.ubwoko_bwatangajwe, n.sval)) { c = igice_gishya("RecordLit"); }
+    c.sval = n.sval;
+    niba (ni(st, "RPAREN") == 0) {
+      ongeraho_umwana(c, interuro(st));
+      mugihe (ni(st, "COMMA")) { reka y = imbere(st); ongeraho_umwana(c, interuro(st)); }
+    }
+    reka z = tegereza(st, "RPAREN", "')'");
+    n = c;
+  }
+  mugihe (ni(st, "LBRACKET") cyangwa ni(st, "DOT") cyangwa ni(st, "QUESTION")) {
+    niba (ni(st, "QUESTION")) {
+      reka x = imbere(st);
+      reka tr: Igice = igice_gishya("Try");
+      ongeraho_umwana(tr, n);
+      n = tr;
+    }
+    ubundi niba (ni(st, "LBRACKET")) {
+      reka x = imbere(st);
+      reka idx: Igice = interuro(st);
+      reka y = tegereza(st, "RBRACKET", "']'");
+      reka ix: Igice = igice_gishya("Index");
+      ongeraho_umwana(ix, n);
+      ongeraho_umwana(ix, idx);
+      n = ix;
+    }
+    ubundi {
+      reka x = imbere(st);
+      reka f: Ikimenyetso = tegereza(st, "IDENT", "izina ry'umwanya");
+      reka fa: Igice = igice_gishya("FieldAccess");
+      fa.sval = f.inyandiko;
+      ongeraho_umwana(fa, n);
+      n = fa;
+    }
+  }
+  tanga n;
+}
+
+umurimo irimo_akadomo(s: ijambo): umubare {
+  reka i = 0;
+  mugihe (i < uburebure(s)) {
+    niba (inyuguti(s, i) == 46) { tanga 1; }
+    i = i + 1;
+  }
+  tanga 0;
+}
+
+umurimo ibanze(st: Aho): Igice {
+  niba (ni(st, "NUM")) {
+    reka t: Ikimenyetso = imbere(st);
+    reka n: Igice = igice_gishya("Num");
+    n.sval = t.inyandiko;
+    n.ni_ibice = irimo_akadomo(t.inyandiko);
+    tanga n;
+  }
+  niba (ni(st, "STR")) {
+    reka t: Ikimenyetso = imbere(st);
+    reka n: Igice = igice_gishya("Str");
+    n.sval = t.inyandiko;
+    tanga n;
+  }
+  niba (ni(st, "NIBYO")) {
+    reka x = imbere(st);
+    reka n: Igice = igice_gishya("Bool");
+    n.bval = 1;
+    tanga n;
+  }
+  niba (ni(st, "OYA")) {
+    reka x = imbere(st);
+    reka n: Igice = igice_gishya("Bool");
+    n.bval = 0;
+    tanga n;
+  }
+  niba (ni(st, "UMURIMO")) { tanga umurimo_utagira_izina(st); }
+  niba (ni(st, "IDENT")) {
+    reka t: Ikimenyetso = imbere(st);
+    reka n: Igice = igice_gishya("Var");
+    n.sval = t.inyandiko;
+    tanga n;
+  }
+  niba (ni(st, "LPAREN")) {
+    reka x = imbere(st);
+    reka e: Igice = interuro(st);
+    reka y = tegereza(st, "RPAREN", "')'");
+    tanga e;
+  }
+  niba (ni(st, "LBRACKET")) {
+    reka x = imbere(st);
+    reka n: Igice = igice_gishya("ArrayLit");
+    niba (ni(st, "RBRACKET") == 0) {
+      ongeraho_umwana(n, interuro(st));
+      mugihe (ni(st, "COMMA")) { reka y = imbere(st); ongeraho_umwana(n, interuro(st)); }
+    }
+    reka z = tegereza(st, "RBRACKET", "']'");
+    tanga n;
+  }
+  bamenyeshe(st, "ikintu kitazwi");
+  reka x = imbere(st);                        # do not spin on the bad token
+  tanga igice_gishya("Num");
+}
+
+# ---- porogaramu -- the whole file -----------------------------------------
+umurimo sesengura_porogaramu(toks: urutonde): Igice {
+  reka st: Aho = Aho(toks, 0, ubunini(toks), 0, "", inkoranya());
+  reka n: Igice = igice_gishya("Program");
+  mugihe (st.i < st.n na st.ikosa_ryabaye == 0) {
+    ongeraho_umwana(n, ibwiriza(st));
+  }
+  niba (st.ikosa_ryabaye) {
+    reka bad: Igice = igice_gishya("IKOSA");
+    bad.sval = st.ubutumwa;
+    tanga bad;
+  }
+  tanga n;
+}

@@ -9,6 +9,60 @@
 #include <vector>
 #include <cstdlib>
 
+namespace {
+
+std::string escText(const std::string& in){
+  std::string o;
+  for(char ch : in){
+    if(ch == '\n')      o += "\\n";
+    else if(ch == '\t') o += "\\t";
+    else if(ch == '\r') o += "\\r";
+    else if(ch == '\\') o += "\\\\";
+    else                o += ch;
+  }
+  return o;
+}
+
+std::string joinList(const std::vector<std::string>& v){
+  std::string o;
+  for(size_t i=0;i<v.size();++i){ if(i) o += ","; o += v[i]; }
+  return o;
+}
+
+// One node per line, two spaces of indent per level. Every field the parser
+// can set is printed, and only when it is set, so the format stays readable
+// and the Wandaa parser has an exact target to match.
+void dumpNode(const NodePtr& n, int depth){
+  if(!n) return;
+  std::string line(depth * 2, ' ');
+  line += nodeName(n->type);
+  if(!n->sval.empty())  line += " s=" + escText(n->sval);
+  if(!n->sval2.empty()) line += " s2=" + escText(n->sval2);
+  // bval is also how importDecl marks an unresolved import Block, so it is
+  // printed whenever it is set, not only for Bool.
+  if(n->bval)                  line += " b=1";
+  else if(n->type == NT::Bool) line += " b=0";
+  if(n->isFloat)        line += " f=1";
+  if(!n->params.empty()) line += " p=" + joinList(n->params);
+  {
+    bool any = false;
+    for(const auto& t : n->paramTypes) if(!t.empty()) any = true;
+    if(any) line += " pt=" + joinList(n->paramTypes);
+  }
+  if(!n->retType.empty())    line += " r=" + n->retType;
+  if(!n->typeParams.empty()) line += " tp=" + joinList(n->typeParams);
+  if(!n->widths.empty()){
+    std::vector<std::string> w;
+    for(int x : n->widths) w.push_back(std::to_string(x));
+    line += " w=" + joinList(w);
+  }
+  if(n->line > 0) line += " l=" + std::to_string(n->line);
+  std::cout << line << "\n";
+  for(const auto& k : n->kids) dumpNode(k, depth + 1);
+}
+
+} // namespace
+
 // wandaac -- the Wandaa compiler.
 //
 // Reads a .waa source file and writes a native Windows x86-64 .exe. Nothing
@@ -23,12 +77,17 @@ int main(int argc, char** argv){
   // being written for the bootstrap has something to be diffed against: the
   // same ground-truth-by-comparison approach the instruction encoder uses.
   bool dumpTokens = false;
+  // --ast does the same job for the parser: a dump the Wandaa parser can be
+  // compared against, one node per line.
+  bool dumpAst = false;
   for(int i = 1; i < argc; ++i){
     const std::string arg = argv[i];
     if(arg == "-q" || arg == "--quiet"){
       quiet = true;
     } else if(arg == "--tokens"){
       dumpTokens = true;
+    } else if(arg == "--ast"){
+      dumpAst = true;
     } else if(arg == "-I"){
       if(i + 1 >= argc){ std::cerr << "-I isaba ububiko\n"; return 1; }
       includeDirs.push_back(argv[++i]);
@@ -98,6 +157,21 @@ int main(int argc, char** argv){
         if(t.type == Tok::END) break;
         std::cout << tokenName(t.type) << " " << t.line << " " << esc(t.text) << "\n";
       }
+    } catch(const std::exception& e){
+      std::cerr << "Ikosa ryo gukusanya: " << e.what() << "\n";
+      return 1;
+    }
+    return 0;
+  }
+
+  if(dumpAst){
+    try {
+      std::ifstream in(srcPath, std::ios::binary);
+      if(!in){ std::cerr << "ntibashoboye gusoma: " << srcPath << "\n"; return 1; }
+      std::stringstream ss; ss << in.rdbuf();
+      // Deliberately NOT parseProgramWithImports: a dump is of THIS file, so
+      // that it can be compared against a parser that does not follow imports.
+      dumpNode(parse(tokenize(ss.str())), 0);
     } catch(const std::exception& e){
       std::cerr << "Ikosa ryo gukusanya: " << e.what() << "\n";
       return 1;

@@ -397,7 +397,11 @@ struct Parser {
   }
 
   NodePtr primary(){
-    if(check(Tok::NUM)){ auto tk=advance(); auto n=mk(NT::Num); n->nval=tk.num; n->isFloat=tk.isFloat; return n; }
+    // sval carries the literal AS WRITTEN. Nothing compiles from it -- codegen
+    // uses nval and isFloat -- but it lets `wandaac --ast` print the number
+    // exactly, so the Wandaa parser's dump can be compared without the two
+    // having to agree on how to format a double.
+    if(check(Tok::NUM)){ auto tk=advance(); auto n=mk(NT::Num); n->sval=tk.text; n->nval=tk.num; n->isFloat=tk.isFloat; return n; }
     if(check(Tok::STR)){ auto tk=advance(); auto n=mk(NT::Str); n->sval=tk.text; return n; }
     if(check(Tok::NIBYO)){ advance(); auto n=mk(NT::Bool); n->bval=true; return n; }
     if(check(Tok::OYA)){ advance(); auto n=mk(NT::Bool); n->bval=false; return n; }

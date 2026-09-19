@@ -137,6 +137,22 @@ std::unordered_map<std::string, std::string> g_varRecordType;
 // looking at and every field resolves to offset 0 -- silently reading the
 // wrong bytes. A written type is what supplies the answer.
 std::unordered_map<std::string, std::string> g_arrElemRecord;
+
+// Record types are tracked by variable NAME, across the whole program rather
+// than per function. Reusing one name for two different records would then
+// resolve field offsets against whichever was recorded last -- and if both
+// records happen to have a field of that name, it reads the wrong bytes with
+// no error at all. So a conflict is refused outright.
+void noteVarRecord(const std::string& name, const std::string& rec, int line){
+  auto it = g_varRecordType.find(name);
+  if(it != g_varRecordType.end() && it->second != rec)
+    throw std::runtime_error(
+      "ikigereranyo '" + name + "' cyahawe ubwoko bubiri butandukanye: '" +
+      it->second + "' na '" + rec + "' (ku murongo " + std::to_string(line) +
+      "). Ubwoko bw'ikigereranyo bukurikiranwa ku izina muri porogaramu yose, "
+      "bityo hindura rimwe muri ayo mazina.");
+  g_varRecordType[name] = rec;
+}
 std::unordered_map<std::string, std::string> g_fnRecord;
 
 std::string recordTypeNameOf(const NodePtr& n){
@@ -577,7 +593,7 @@ VType requireType(const std::string& t, const std::string& where, int line){
 void recordTypeArg(const std::string& decl, VType base, const std::string& name, int line){
   // `x: Ikimenyetso` says outright which record x is, which is the only way a
   // field access on a parameter or on an array element can be resolved.
-  if(base == VType::Record) g_varRecordType[name] = typeBase(decl);
+  if(base == VType::Record) noteVarRecord(name, typeBase(decl), line);
   const std::string arg = typeArg(decl);
   if(arg.empty()) return;
   const VType a = requireType(arg, "ku '" + name + "'", line);
@@ -1098,6 +1114,18 @@ struct Checker {
 
   void walk(const NodePtr& n, const std::unordered_map<std::string,VType>& types){
     if(!n) return;
+
+    // A function body is NOT checked here. checkProgram walks each one
+    // separately with its parameters bound; descending into it from the
+    // top-level walk would check it against the WRONG scope, where a
+    // top-level variable shadows a parameter of the same name. That produced
+    // a false rejection of `ongeraho_umwana(b, r)` inside a function taking
+    // `r: Igice`, because a top-level `reka r = ...` held a result.
+    //
+    // A lambda body is still walked: its free variables really do come from
+    // here, and its own parameters fall back to Int, which is the lenient
+    // case rather than a false positive.
+    if(n->type == NT::FuncDecl) return;
 
     switch(n->type){
       case NT::RecordLit: {

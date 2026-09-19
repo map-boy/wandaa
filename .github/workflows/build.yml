@@ -49,6 +49,11 @@ jobs:
         shell: pwsh
         run: .\compiler\verify_lexer.ps1
 
+      # Stage 2b: the Wandaa parser has to build the same tree as the C++ one.
+      - name: Wandaa parser vs C++ parser
+        shell: pwsh
+        run: .\compiler\verify_parser.ps1
+
   # Ground-truth checks that need GNU binutils. These gate the two things that
   # cannot be eyeballed: that X64Asm agrees with a real assembler byte-for-byte,
   # and that the checked-in runtime blob still matches runtime.s.

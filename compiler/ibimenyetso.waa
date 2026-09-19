@@ -1,0 +1,234 @@
+# ===========================================================================
+#  compiler/ibimenyetso.waa -- the Wandaa lexer, as a module.
+#
+#  Declarations only: `injiza` runs a module's top-level statements, so a
+#  module that is meant to be imported must not have any.
+#
+#  sesengura(src) gives back either the tokens or a message, so a caller can
+#  report the failure rather than guess at an empty array.
+# ===========================================================================
+
+ubwoko Ikimenyetso {
+  ubwoko_bwacyo: ijambo,      # "REKA", "IDENT", "NUM", ...
+  inyandiko: ijambo,          # the text; for STR, the DECODED value
+  umurongo: umubare
+}
+
+# ---- ibyiciro by'inyuguti -- character classes ----------------------------
+umurimo ni_umubare(c: umubare): umubare { tanga c >= 48 na c <= 57; }
+
+umurimo ni_ibanze(c: umubare): umubare {
+  tanga (c >= 65 na c <= 90) cyangwa (c >= 97 na c <= 122) cyangwa c == 95;
+}
+
+umurimo ni_ibanze_cg_umubare(c: umubare): umubare {
+  tanga ni_ibanze(c) cyangwa ni_umubare(c);
+}
+
+# A newline is counted separately, so it is not whitespace here.
+umurimo ni_umwanya(c: umubare): umubare {
+  tanga c == 32 cyangwa c == 9 cyangwa c == 13;
+}
+
+umurimo amagambo_akomeye() {
+  reka k = inkoranya();
+  k = shyiramo(k, "reka", "REKA");
+  k = shyiramo(k, "niba", "NIBA");
+  k = shyiramo(k, "ubundi", "UBUNDI");
+  k = shyiramo(k, "mugihe", "MUGIHE");
+  k = shyiramo(k, "umurimo", "UMURIMO");
+  k = shyiramo(k, "tanga", "TANGA");
+  k = shyiramo(k, "andika", "ANDIKA");
+  k = shyiramo(k, "nibyo", "NIBYO");
+  k = shyiramo(k, "oya", "OYA");
+  k = shyiramo(k, "hanze", "HANZE");
+  k = shyiramo(k, "injiza", "INJIZA");
+  k = shyiramo(k, "na", "NA");
+  k = shyiramo(k, "cyangwa", "CYANGWA");
+  k = shyiramo(k, "si", "SI");
+  k = shyiramo(k, "hagarika", "HAGARIKA");
+  k = shyiramo(k, "komeza", "KOMEZA");
+  k = shyiramo(k, "ubwoko", "UBWOKO");
+  tanga k;
+}
+
+# ---- ibimenyetso by'inyuguti imwe -- single-character tokens --------------
+umurimo ikimenyetso_kimwe(c: umubare): ijambo {
+  niba (c == 43) { tanga "PLUS"; }
+  ubundi niba (c == 45) { tanga "MINUS"; }
+  ubundi niba (c == 42) { tanga "STAR"; }
+  ubundi niba (c == 47) { tanga "SLASH"; }
+  ubundi niba (c == 40) { tanga "LPAREN"; }
+  ubundi niba (c == 41) { tanga "RPAREN"; }
+  ubundi niba (c == 123) { tanga "LBRACE"; }
+  ubundi niba (c == 125) { tanga "RBRACE"; }
+  ubundi niba (c == 91) { tanga "LBRACKET"; }
+  ubundi niba (c == 93) { tanga "RBRACKET"; }
+  ubundi niba (c == 44) { tanga "COMMA"; }
+  ubundi niba (c == 59) { tanga "SEMI"; }
+  ubundi niba (c == 58) { tanga "COLON"; }
+  ubundi niba (c == 46) { tanga "DOT"; }
+  ubundi niba (c == 63) { tanga "QUESTION"; }
+  ubundi { tanga ""; }
+}
+
+umurimo ikimenyetso(t: ijambo, s: ijambo, l: umubare): Ikimenyetso {
+  tanga Ikimenyetso(t, s, l);
+}
+
+# ---- gusesengura -- the scanner -------------------------------------------
+umurimo sesengura(src: ijambo): igisubizo<urutonde> {
+  reka kw = amagambo_akomeye();
+  reka bose: urutonde<Ikimenyetso> = urutonde(0);
+  reka n = uburebure(src);
+  reka i = 0;
+  reka umurongo = 1;
+
+  # A UTF-8 byte-order mark is skipped, as the C++ lexer does.
+  niba (n >= 3 na inyuguti(src, 0) == 239 na inyuguti(src, 1) == 187 na inyuguti(src, 2) == 191) {
+    i = 3;
+  }
+
+  mugihe (i < n) {
+    reka c = inyuguti(src, i);
+
+    niba (c == 10) {
+      umurongo = umurongo + 1;
+      i = i + 1;
+    }
+    ubundi niba (ni_umwanya(c)) {
+      i = i + 1;
+    }
+    ubundi niba (c == 35) {                       # '#' -- to end of line
+      mugihe (i < n na inyuguti(src, i) != 10) { i = i + 1; }
+    }
+    ubundi niba (ni_umubare(c)) {
+      reka aho = i;
+      reka utudomo = 0;
+      mugihe (i < n) {
+        reka d = inyuguti(src, i);
+        niba (ni_umubare(d)) { i = i + 1; }
+        ubundi niba (d == 46) { utudomo = utudomo + 1; i = i + 1; }
+        ubundi { hagarika; }
+      }
+      reka lit = igice(src, aho, i - aho);
+      niba (utudomo > 1) {
+        tanga byanze("umubare utaremewe '" + lit + "' ku murongo " + mu_ijambo(umurongo));
+      }
+      niba (utudomo == 1 na inyuguti(lit, uburebure(lit) - 1) == 46) {
+        tanga byanze("umubare ukeneye ibice nyuma ya '.' : '" + lit + "' ku murongo " + mu_ijambo(umurongo));
+      }
+      bose = ongeraho(bose, ikimenyetso("NUM", lit, umurongo));
+    }
+    ubundi niba (ni_ibanze(c)) {
+      reka aho = i;
+      mugihe (i < n na ni_ibanze_cg_umubare(inyuguti(src, i))) { i = i + 1; }
+      reka w = igice(src, aho, i - aho);
+      niba (arimo(kw, w)) {
+        reka izina: ijambo = fata(kw, w);
+        bose = ongeraho(bose, ikimenyetso(izina, w, umurongo));
+      }
+      ubundi {
+        bose = ongeraho(bose, ikimenyetso("IDENT", w, umurongo));
+      }
+    }
+    ubundi niba (c == 34) {                       # '"'
+      reka umurongo_wo_gutangira = umurongo;
+      i = i + 1;
+      reka agaciro_ryo = "";
+      reka byarangiye = 0;
+      mugihe (byarangiye == 0) {
+        niba (i >= n) {
+          tanga byanze("ijambo ritarangiye ku murongo " + mu_ijambo(umurongo_wo_gutangira));
+        }
+        reka d = inyuguti(src, i);
+        niba (d == 34) { byarangiye = 1; i = i + 1; }
+        ubundi niba (d == 92 na i + 1 < n) {
+          reka e = inyuguti(src, i + 1);
+          niba (e == 110) { agaciro_ryo = agaciro_ryo + "\n"; i = i + 2; }
+          ubundi niba (e == 116) { agaciro_ryo = agaciro_ryo + "\t"; i = i + 2; }
+          ubundi niba (e == 114) { agaciro_ryo = agaciro_ryo + "\r"; i = i + 2; }
+          ubundi niba (e == 48) { i = i + 2; }    # \0 -- a NUL in the value
+          ubundi niba (e == 92) { agaciro_ryo = agaciro_ryo + "\\"; i = i + 2; }
+          ubundi niba (e == 34) { agaciro_ryo = agaciro_ryo + "\""; i = i + 2; }
+          ubundi {
+            tanga byanze("ikimenyetso cyo guhunga kitazwi '\\" + igice(src, i + 1, 1) +
+                         "' ku murongo " + mu_ijambo(umurongo));
+          }
+        }
+        ubundi {
+          niba (d == 10) { umurongo = umurongo + 1; }
+          agaciro_ryo = agaciro_ryo + igice(src, i, 1);
+          i = i + 1;
+        }
+      }
+      bose = ongeraho(bose, ikimenyetso("STR", agaciro_ryo, umurongo));
+    }
+    ubundi {
+      reka d = 0;
+      niba (i + 1 < n) { d = inyuguti(src, i + 1); }
+
+      niba (c == 61 na d == 61) { bose = ongeraho(bose, ikimenyetso("EQEQ", "==", umurongo)); i = i + 2; }
+      ubundi niba (c == 33 na d == 61) { bose = ongeraho(bose, ikimenyetso("NEQ", "!=", umurongo)); i = i + 2; }
+      ubundi niba (c == 60 na d == 61) { bose = ongeraho(bose, ikimenyetso("LE", "<=", umurongo)); i = i + 2; }
+      ubundi niba (c == 62 na d == 61) { bose = ongeraho(bose, ikimenyetso("GE", ">=", umurongo)); i = i + 2; }
+      ubundi niba (c == 38 na d == 38) { bose = ongeraho(bose, ikimenyetso("ANDAND", "&&", umurongo)); i = i + 2; }
+      ubundi niba (c == 124 na d == 124) { bose = ongeraho(bose, ikimenyetso("OROR", "||", umurongo)); i = i + 2; }
+      ubundi niba (c == 61) { bose = ongeraho(bose, ikimenyetso("EQ", "=", umurongo)); i = i + 1; }
+      ubundi niba (c == 33) { bose = ongeraho(bose, ikimenyetso("BANG", "!", umurongo)); i = i + 1; }
+      ubundi niba (c == 60) { bose = ongeraho(bose, ikimenyetso("LT", "<", umurongo)); i = i + 1; }
+      ubundi niba (c == 62) { bose = ongeraho(bose, ikimenyetso("GT", ">", umurongo)); i = i + 1; }
+      ubundi niba (c == 38) { bose = ongeraho(bose, ikimenyetso("AMP", "&", umurongo)); i = i + 1; }
+      ubundi niba (c == 124) {
+        tanga byanze("ikimenyetso kitazwi '|' ku murongo " + mu_ijambo(umurongo));
+      }
+      ubundi {
+        reka izina: ijambo = ikimenyetso_kimwe(c);
+        niba (uburebure(izina) == 0) {
+          tanga byanze("ikimenyetso kitazwi '" + igice(src, i, 1) + "' ku murongo " + mu_ijambo(umurongo));
+        }
+        bose = ongeraho(bose, ikimenyetso(izina, igice(src, i, 1), umurongo));
+        i = i + 1;
+      }
+    }
+  }
+  tanga byakunze(bose);
+}
+
+# A string token's text is the DECODED value, which may hold a newline or a
+# tab. Re-escape it so that every token stays on a single line.
+umurimo sohora(t: ijambo): ijambo {
+  reka igisubizo_cyo = "";
+  reka i = 0;
+  mugihe (i < uburebure(t)) {
+    reka c = inyuguti(t, i);
+    niba (c == 10) { igisubizo_cyo = igisubizo_cyo + "\\n"; }
+    ubundi niba (c == 9) { igisubizo_cyo = igisubizo_cyo + "\\t"; }
+    ubundi niba (c == 13) { igisubizo_cyo = igisubizo_cyo + "\\r"; }
+    ubundi niba (c == 92) { igisubizo_cyo = igisubizo_cyo + "\\\\"; }
+    ubundi { igisubizo_cyo = igisubizo_cyo + igice(t, i, 1); }
+    i = i + 1;
+  }
+  tanga igisubizo_cyo;
+}
+
+# ---- the path, from the Windows command line ------------------------------
+# Wandaa has no argv, so the path is everything after the last space, with
+# any quotes the shell added stripped off.
+hanze "kernel32.dll" GetCommandLineA();
+
+umurimo inzira_yatanzwe(): ijambo {
+  reka cmd = ijambo(GetCommandLineA());
+  reka n = uburebure(cmd);
+  reka aho = 0;
+  reka i = 0;
+  mugihe (i < n) {
+    niba (inyuguti(cmd, i) == 32) { aho = i + 1; }
+    i = i + 1;
+  }
+  reka p = igice(cmd, aho, n - aho);
+  niba (uburebure(p) >= 2 na inyuguti(p, 0) == 34) {
+    p = igice(p, 1, uburebure(p) - 2);
+  }
+  tanga p;
+}

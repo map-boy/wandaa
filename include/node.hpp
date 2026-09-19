@@ -48,3 +48,26 @@ struct Node {
 };
 
 inline NodePtr mk(NT t){ auto n = std::make_shared<Node>(); n->type = t; return n; }
+
+// The name of a node kind, for `wandaac --ast`. The Wandaa parser prints these
+// same names, so the two dumps can be diffed line for line.
+inline const char* nodeName(NT t){
+  switch(t){
+    case NT::Num: return "Num";               case NT::Str: return "Str";
+    case NT::Bool: return "Bool";             case NT::Var: return "Var";
+    case NT::Bin: return "Bin";               case NT::Un: return "Un";
+    case NT::Assign: return "Assign";         case NT::VarDecl: return "VarDecl";
+    case NT::Call: return "Call";             case NT::Block: return "Block";
+    case NT::If: return "If";                 case NT::While: return "While";
+    case NT::FuncDecl: return "FuncDecl";     case NT::Return: return "Return";
+    case NT::Print: return "Print";           case NT::ExprStmt: return "ExprStmt";
+    case NT::Program: return "Program";       case NT::ArrayLit: return "ArrayLit";
+    case NT::Index: return "Index";           case NT::IndexAssign: return "IndexAssign";
+    case NT::ExternDecl: return "ExternDecl"; case NT::Break: return "Break";
+    case NT::Continue: return "Continue";     case NT::RecordDecl: return "RecordDecl";
+    case NT::RecordLit: return "RecordLit";   case NT::FieldAccess: return "FieldAccess";
+    case NT::FieldAssign: return "FieldAssign"; case NT::AddrOf: return "AddrOf";
+    case NT::Try: return "Try";               case NT::Lambda: return "Lambda";
+  }
+  return "?";
+}

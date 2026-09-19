@@ -203,17 +203,25 @@ compiler contributor a Wandaa programmer.
 | 0 | The current C++ compiler | **Done** |
 | 1 | Phase 1 language features, so a compiler is writable | **Prerequisites met** |
 | 2a | `compiler/lexer.waa` — the lexer in Wandaa | **Done** |
-| 2b | `compiler/parser.waa` — the parser in Wandaa | Planned |
+| 2b | `compiler/parser.waa` — the parser in Wandaa | **Done** |
 | 2c | `compiler/codegen.waa` — the code generator in Wandaa | Planned |
 | 3 | Compile stage 2 with stage 0 → `wandaac-s1.exe` | Planned |
 | 4 | Compile stage 2 with `wandaac-s1.exe` → `wandaac-s2.exe` | Planned |
 | 5 | **Assert `wandaac-s1.exe` and `wandaac-s2.exe` are byte-identical** | Planned |
 
-Stage 2a is in. `compiler/lexer.waa` is the Wandaa lexer, written in Wandaa,
-and `compiler/verify_lexer.sh` (with a PowerShell twin for CI) requires its
-token stream to be byte-identical to `wandaac --tokens` for every `.waa` file
-in the repository — 49 of them, including its own source. That is the same
-ground-truth-by-comparison the instruction encoder uses, and it is a CI gate.
+Stages 2a and 2b are in. `compiler/ibimenyetso.waa` is the lexer and
+`compiler/isesengura.waa` the parser, both written in Wandaa, with
+`compiler/lexer.waa` and `compiler/parser.waa` as the drivers that print a
+token stream and an AST. `compiler/verify_lexer.sh` and
+`compiler/verify_parser.sh` (each with a PowerShell twin for CI) require both
+to be byte-identical to `wandaac --tokens` and `wandaac --ast` for every
+`.waa` file in the repository — 53 of them, including their own sources. That
+is the same ground-truth-by-comparison the instruction encoder uses, and both
+are CI gates.
+
+What is left for stage 2 is the code generator, which is the large half: the
+instruction encoder, the PE writer and the runtime blob all have to be
+expressible in Wandaa.
 
 Every feature listed above as required now exists. That is not the same as
 having proved a compiler is writable in Wandaa — only stage 2 proves that, by
