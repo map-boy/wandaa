@@ -1035,6 +1035,9 @@ struct Checker {
   }
 
   // Builtin name -> exact argument count.
+  // Whether a name is a builtin AT ALL depends on the program: a declared
+  // function of the same name replaces it. The callers below consult
+  // g_declaredFns first for exactly that reason.
   static const std::unordered_map<std::string,size_t>& builtinArity(){
     static const std::unordered_map<std::string,size_t> m = {
       {"uburebure",1},{"ubunini",1},{"soma",1},{"andikamo",2},{"ongeramo",2},
@@ -1918,8 +1921,9 @@ struct Codegen {
     // The result builtins are emitted inline: each is a handful of
     // instructions over the two-slot block, with no runtime routine to call
     // except the two traps.
-    if(n->sval=="byakunze" || n->sval=="byanze" || n->sval=="byarakunze" ||
-       n->sval=="agaciro"  || n->sval=="ikosa"){
+    if(!g_declaredFns.count(n->sval) &&
+       (n->sval=="byakunze" || n->sval=="byanze" || n->sval=="byarakunze" ||
+        n->sval=="agaciro"  || n->sval=="ikosa")){
       if(n->kids.size() != 1)
         throw std::runtime_error("'" + n->sval + "' isaba igipimo kimwe gusa");
       if(n->sval=="byakunze")        { genResultNew(n, 1); return; }

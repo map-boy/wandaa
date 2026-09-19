@@ -19,10 +19,16 @@ int main(int argc, char** argv){
   std::string srcPath, outPath;
   std::vector<std::string> includeDirs;
   bool quiet = false;                       // -q: say nothing on success
+  // --tokens dumps the token stream and stops. It exists so the Wandaa lexer
+  // being written for the bootstrap has something to be diffed against: the
+  // same ground-truth-by-comparison approach the instruction encoder uses.
+  bool dumpTokens = false;
   for(int i = 1; i < argc; ++i){
     const std::string arg = argv[i];
     if(arg == "-q" || arg == "--quiet"){
       quiet = true;
+    } else if(arg == "--tokens"){
+      dumpTokens = true;
     } else if(arg == "-I"){
       if(i + 1 >= argc){ std::cerr << "-I isaba ububiko\n"; return 1; }
       includeDirs.push_back(argv[++i]);
@@ -68,6 +74,36 @@ int main(int argc, char** argv){
     searchPaths.push_back(exeDir + "/../lib");     // wandaac in a bin/ subdir
   }
   searchPaths.push_back("lib");                    // source checkout, cwd-relative
+
+  if(dumpTokens){
+    std::ifstream in(srcPath, std::ios::binary);
+    if(!in){ std::cerr << "ntibashoboye gusoma: " << srcPath << "\n"; return 1; }
+    std::stringstream ss; ss << in.rdbuf();
+    try {
+      // A string token's text is the DECODED value, which can contain a
+      // newline or a tab. Re-escape so every token stays on one line and the
+      // two streams can be compared line for line.
+      auto esc = [](const std::string& in){
+        std::string o;
+        for(char ch : in){
+          if(ch == '\n')      o += "\\n";
+          else if(ch == '\t') o += "\\t";
+          else if(ch == '\r') o += "\\r";
+          else if(ch == '\\') o += "\\\\";
+          else                o += ch;
+        }
+        return o;
+      };
+      for(const auto& t : tokenize(ss.str())){
+        if(t.type == Tok::END) break;
+        std::cout << tokenName(t.type) << " " << t.line << " " << esc(t.text) << "\n";
+      }
+    } catch(const std::exception& e){
+      std::cerr << "Ikosa ryo gukusanya: " << e.what() << "\n";
+      return 1;
+    }
+    return 0;
+  }
 
   try {
     const auto ast = parseProgramWithImports(srcPath, searchPaths);
