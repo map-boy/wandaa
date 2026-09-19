@@ -1,0 +1,35 @@
+# A record read out of an array, or received as a parameter, or returned by a
+# function, has no type the compiler can work out on its own -- every field
+# access would resolve to offset 0 and silently read the wrong bytes. A
+# written type is what supplies the answer.
+ubwoko Ikimenyetso { ubwoko_bwacyo: ijambo, inyandiko: ijambo, umurongo: umubare }
+
+umurimo kora(t: ijambo, s: ijambo, l: umubare): Ikimenyetso {
+  tanga Ikimenyetso(t, s, l);
+}
+
+# A PARAMETER of record type.
+umurimo erekana(k: Ikimenyetso): ijambo {
+  tanga k.ubwoko_bwacyo + " " + mu_ijambo(k.umurongo) + " " + k.inyandiko;
+}
+
+reka bose: urutonde<Ikimenyetso> = urutonde(0);
+bose = ongeraho(bose, kora("REKA", "reka", 1));
+bose = ongeraho(bose, kora("IDENT", "a", 2));
+bose = ongeraho(bose, kora("NUM", "42", 3));
+
+# An ARRAY ELEMENT of record type, pulled out into a variable...
+reka i = 0;
+mugihe (i < ubunini(bose)) {
+  reka k: Ikimenyetso = bose[i];
+  andika(erekana(k));
+  i = i + 1;
+}
+
+# ...and indexed directly, which `urutonde<Ikimenyetso>` is what resolves.
+andika(bose[0].inyandiko);
+andika(bose[2].umurongo);
+
+# A field read straight off a CALL that declares a record return type.
+andika(kora("STR", "mwiriwe", 9).inyandiko);
+andika(kora("STR", "mwiriwe", 9).umurongo);

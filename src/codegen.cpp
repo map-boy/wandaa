@@ -132,6 +132,12 @@ struct RecordTypeInfo {
 };
 std::unordered_map<std::string, RecordTypeInfo> g_recordTypes;
 std::unordered_map<std::string, std::string> g_varRecordType;
+// The record type of an ARRAY's elements, and of a function's return value.
+// Without these, `reka t = tokens[i]; t.izina` has no idea which record it is
+// looking at and every field resolves to offset 0 -- silently reading the
+// wrong bytes. A written type is what supplies the answer.
+std::unordered_map<std::string, std::string> g_arrElemRecord;
+std::unordered_map<std::string, std::string> g_fnRecord;
 
 std::string recordTypeNameOf(const NodePtr& n){
   if(!n) return "";
@@ -139,6 +145,16 @@ std::string recordTypeNameOf(const NodePtr& n){
   if(n->type == NT::Var){
     auto it = g_varRecordType.find(n->sval);
     return it != g_varRecordType.end() ? it->second : "";
+  }
+  // `tokens[i].izina` where tokens was declared `urutonde<Ikimenyetso>`.
+  if(n->type == NT::Index && !n->kids.empty() && n->kids[0]->type == NT::Var){
+    auto it = g_arrElemRecord.find(n->kids[0]->sval);
+    if(it != g_arrElemRecord.end()) return it->second;
+  }
+  // `kora_ikimenyetso(...).izina` where that function declares a record return.
+  if(n->type == NT::Call){
+    auto it = g_fnRecord.find(n->sval);
+    if(it != g_fnRecord.end()) return it->second;
   }
   return "";
 }
@@ -559,11 +575,17 @@ VType requireType(const std::string& t, const std::string& where, int line){
 // `reka a: urutonde<ibice> = urutonde(3);` states outright what noteIndexedWrite
 // could previously only infer from a later assignment.
 void recordTypeArg(const std::string& decl, VType base, const std::string& name, int line){
+  // `x: Ikimenyetso` says outright which record x is, which is the only way a
+  // field access on a parameter or on an array element can be resolved.
+  if(base == VType::Record) g_varRecordType[name] = typeBase(decl);
   const std::string arg = typeArg(decl);
   if(arg.empty()) return;
   const VType a = requireType(arg, "ku '" + name + "'", line);
   if(base == VType::Arr)    g_arrElemTypes[name] = a;
   if(base == VType::Result) g_resultPayload[name] = a;
+  // `urutonde<Ikimenyetso>` also says what its elements are.
+  if(a == VType::Record && (base == VType::Arr || base == VType::Result))
+    g_arrElemRecord[name] = typeBase(arg);
 }
 
 // `reka a = shungura(...);` where shungura is generic and returns
@@ -2099,6 +2121,7 @@ struct Codegen {
       if(f->retType.empty() || mentionsTypeParam(f->retType)) continue;
       const VType rt = requireType(f->retType, "ku bisubizwa na '" + f->sval + "'", f->line);
       g_fnReturnTypes[f->sval] = rt;
+      if(rt == VType::Record) g_fnRecord[f->sval] = typeBase(f->retType);
       // `urutonde<ijambo>` / `igisubizo<umubare>` also say what the elements or
       // the payload are, which is exactly what inference had to guess before.
       const std::string arg = typeArg(f->retType);
@@ -2300,6 +2323,8 @@ struct Codegen {
     g_declaredParamTypes.clear();
     g_recordTypes.clear();
     g_varRecordType.clear();
+    g_arrElemRecord.clear();
+    g_fnRecord.clear();
     registerRecordTypes(program);
     g_fnReturnTypes["soma"] = VType::Str;
     g_fnReturnTypes["ijambo"] = VType::Str;

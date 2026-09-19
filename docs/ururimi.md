@@ -310,6 +310,26 @@ site has no idea what it gives back:
 umurimo koresha(g): ijambo { tanga g("Ana"); }
 ```
 
+### Ubwoko bw'ikigereranyo — naming a record
+
+Compiler ntibasha kumenya ubwoko bw'ikigereranyo gifashwe mu rutonde cyangwa
+gihawe umurimo. Ugomba kubwandika:
+
+A record pulled out of an array, received as a parameter, or returned by a
+function carries no type the compiler can work out on its own — without a
+written one, every field access resolves to offset 0 and silently reads the
+wrong bytes. Write it down:
+
+```wandaa
+ubwoko Ikimenyetso { ubwoko_bwacyo: ijambo, inyandiko: ijambo, umurongo: umubare }
+
+umurimo erekana(k: Ikimenyetso): ijambo { tanga k.inyandiko; }
+
+reka bose: urutonde<Ikimenyetso> = urutonde(0);
+reka k: Ikimenyetso = bose[0];
+andika(bose[0].inyandiko);     # `urutonde<Ikimenyetso>` is what resolves this
+```
+
 ### Mu bwoko — record fields
 
 ```wandaa
