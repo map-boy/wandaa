@@ -336,6 +336,61 @@ everywhere else in the language.
 
 ---
 
+## 6e. Ubwoko rusange — Generics
+
+`umurimo mbere<T>(a: urutonde<T>): T` ni umurimo umwe ukorera buri bwoko.
+
+```wandaa
+umurimo mbere<T>(a: urutonde<T>): T { tanga a[0]; }
+
+reka amazina: urutonde<ijambo> = ["Ana", "Eric"];
+reka ibipimo: urutonde<ibice>  = [1.5, 2.5];
+
+andika(mbere(amazina) + "!");   # Ana!  -- ni ijambo
+andika(mbere(ibipimo));         # 1.5   -- ni ibice
+```
+
+`T` ihabwa agaciro kuri buri hamagara, ihereye ku bipimo yahawe. `T` is bound
+at each call site from the arguments it was given.
+
+**Nta monomorphisation.** Buri gaciro muri Wandaa ni bayiti 8 muri register,
+bityo **umubiri umwe** ukorera buri `T` — nta kopi y'umurimo ikorwa. Generics
+need no monomorphisation: every Wandaa value is 8 bytes in a register, so one
+body serves every `T` and no copy of the function is generated. That is why
+this costs nothing at runtime, and it is the reason generics fit a compiler
+that is meant to stay small (GOVERNANCE principle 3).
+
+Ushobora gukoresha ubwoko burenze bumwe, no kuvanga na bwa bundi buzwi:
+
+```wandaa
+umurimo iya_mbere<A, B>(x: A, y: B): A { tanga x; }
+umurimo subiramo<T>(x: T, n: umubare): T { tanga x; }
+```
+
+Igisubizo na rwo:
+
+```wandaa
+umurimo cyangwabyo<T>(r: igisubizo<T>, d: T): T {
+  niba (byarakunze(r)) { tanga agaciro(r); }
+  tanga d;
+}
+```
+
+Ibigomba kumenyekana — the limits:
+
+- Mu mubiri w'umurimo, `T` ni **impfabusa**: compiler ntizi icyo ari cyo, kandi
+  ni byo bikwiye. Inside the body `T` is opaque — the compiler does not know
+  what it is, and the code there only moves 8 bytes around. So `x + 1` on a `T`
+  is integer arithmetic whatever the caller passed; a generic body cannot do
+  arithmetic or concatenation that depends on `T`.
+- `T` ifatwa ku gipimo cya mbere kiyivuga. `T` is bound from the first argument
+  that mentions it, so a call whose arguments disagree takes the earliest
+  rather than reporting a conflict.
+- Nta bwoko rusange kuri `ubwoko` (records) ubu. Generic *records* are not
+  supported yet — only functions. See [ROADMAP.md](../ROADMAP.md).
+
+---
+
 ## 7. Amagambo — Strings
 
 Ijambo rya Wandaa ni aderesi y'ibice byaryo, rifite **uburebure bw'ibice 8
@@ -558,7 +613,7 @@ line the same way:
 Ibi biri muri [ROADMAP.md](../ROADMAP.md):
 
 - `for` loops
-- Generics (`urutonde<T>` ikora, ariko ntushobora kwandika umurimo
-  ufite igipimo cy'ubwoko cyawe)
+- Ubwoko rusange kuri `ubwoko` (generic records; generic *functions* work —
+  reba igice cya 6e)
 - Amagambo ya Unicode arenze ASCII mu `inyuguti()` / `igice()` (byombi
   bikorera ku bice, not on code points)

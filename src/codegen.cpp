@@ -64,6 +64,8 @@ inline bool isNum(VType t){ return t == VType::Int || t == VType::Float; }
 
 std::unordered_map<std::string,VType> g_fnReturnTypes;
 std::unordered_map<std::string,VType> g_arrElemTypes;
+// The element type a FUNCTION returns, carrying it across the return boundary.
+std::unordered_map<std::string,VType> g_fnArrElemTypes;
 
 // What a SUCCESSFUL result carries. There are no generics yet, so a result's
 // payload has no type of its own and would read back as plain Int -- exactly
@@ -97,6 +99,22 @@ std::unordered_map<std::string,std::string> g_fnLambda;
 // fnParamTypes, which mixes declarations with what inference guessed: only a
 // declared type is certain enough to reject a call over.
 std::unordered_map<std::string,std::map<size_t,VType>> g_declaredParamTypes;
+
+// Generic functions. `umurimo mbere<T>(a: urutonde<T>): T` needs no
+// monomorphisation: every Wandaa value is 8 bytes in a register, so ONE body
+// serves every T and generics are purely a compile-time device for working out
+// what a call gives back. Inside the body T is opaque -- correctly so, since
+// the code there only moves 8 bytes around.
+std::unordered_map<std::string,std::vector<std::string>> g_fnTypeParams;
+// The annotation text of each declared parameter, kept verbatim so a call site
+// can match `urutonde<T>` against the argument it was actually given.
+std::unordered_map<std::string,std::map<size_t,std::string>> g_fnParamAnnot;
+std::unordered_map<std::string,std::string> g_fnRetAnnot;
+// Which parameter positions are generic. Those must travel RAW: the same 8
+// bytes the caller had, in a general-purpose register, with no conversion.
+// Everywhere else a parameter has one settled type and emitCall coerces to it,
+// which for a T used at two different types would destroy the value.
+std::unordered_map<std::string,std::set<size_t>> g_fnGenericPos;
 
 std::unordered_map<std::string,VType> g_resultPayload;     // variable -> payload
 std::unordered_map<std::string,VType> g_fnResultPayload;   // function -> payload
@@ -139,6 +157,7 @@ struct FnInfo {
 // Defined below, with the rest of the annotation handling; used by both
 // inference walks, which appear before it.
 void applyVarDecl(const NodePtr& n, std::unordered_map<std::string,VType>& types);
+void noteGenericVarDecl(const NodePtr& n, const std::unordered_map<std::string,VType>& types);
 
 void collectNames(const NodePtr& n, std::vector<std::string>& out){
   if(!n) return;
@@ -172,6 +191,10 @@ FnInfo buildFnInfo(const std::vector<std::string>& params, const NodePtr& body,
 
 VType evalType(const NodePtr& n, const std::unordered_map<std::string,VType>& types);
 
+// What an array-valued expression holds. The mirror of payloadTypeOf, and the
+// same kind of inference: certain in three cases, Int otherwise.
+VType elemTypeOf(const NodePtr& n, const std::unordered_map<std::string,VType>& types);
+
 // The type of the value inside a successful result.
 //
 // This is inference, not knowledge: nothing at runtime records what those 8
@@ -191,6 +214,84 @@ VType payloadTypeOf(const NodePtr& n, const std::unordered_map<std::string,VType
     if(it != g_resultPayload.end()) return it->second;
   }
   return VType::Int;
+}
+
+VType elemTypeOf(const NodePtr& n, const std::unordered_map<std::string,VType>& types){
+  if(!n) return VType::Int;
+  if(n->type==NT::Var){
+    auto it = g_arrElemTypes.find(n->sval);
+    if(it != g_arrElemTypes.end()) return it->second;
+  } else if(n->type==NT::ArrayLit){
+    if(!n->kids.empty()) return evalType(n->kids[0], types);
+  } else if(n->type==NT::Call){
+    auto it = g_fnArrElemTypes.find(n->sval);
+    if(it != g_fnArrElemTypes.end()) return it->second;
+  }
+  return VType::Int;
+}
+
+// Defined with the rest of the annotation handling, below.
+std::string typeBase(const std::string& t);
+std::string typeArg(const std::string& t);
+bool typeFromName(const std::string& t, VType& out);
+
+// Bind a generic function's type parameters from the arguments at a call site.
+// `mbere<T>(a: urutonde<T>)` given an array of strings binds T = ijambo.
+//
+// Only the three shapes that can actually be matched are handled: a parameter
+// that IS the type parameter, `urutonde<T>` and `igisubizo<T>`. The first
+// binding wins, so a call whose arguments disagree takes the earliest rather
+// than guessing between them.
+std::map<std::string,VType> bindTypeParams(const std::string& fn, const NodePtr& call,
+                                           const std::unordered_map<std::string,VType>& types){
+  std::map<std::string,VType> bound;
+  auto tp = g_fnTypeParams.find(fn);
+  auto an = g_fnParamAnnot.find(fn);
+  if(tp == g_fnTypeParams.end() || an == g_fnParamAnnot.end()) return bound;
+  const std::set<std::string> tparams(tp->second.begin(), tp->second.end());
+
+  for(const auto& kv : an->second){
+    const size_t i = kv.first;
+    if(i >= call->kids.size()) continue;
+    const std::string base = typeBase(kv.second), arg = typeArg(kv.second);
+    if(arg.empty()){
+      if(tparams.count(base) && !bound.count(base))
+        bound[base] = evalType(call->kids[i], types);
+    } else if(tparams.count(arg) && !bound.count(arg)){
+      if(base=="urutonde")  bound[arg] = elemTypeOf(call->kids[i], types);
+      if(base=="igisubizo") bound[arg] = payloadTypeOf(call->kids[i], types);
+    }
+  }
+  return bound;
+}
+
+// The type a call to a generic function yields and -- when that is an array or
+// a result -- what it holds. False when the callee is not generic.
+bool genericReturn(const NodePtr& call, const std::unordered_map<std::string,VType>& types,
+                   VType& out, VType* inner = nullptr){
+  auto ra = g_fnRetAnnot.find(call->sval);
+  auto tp = g_fnTypeParams.find(call->sval);
+  if(ra == g_fnRetAnnot.end() || tp == g_fnTypeParams.end()) return false;
+  const std::set<std::string> tparams(tp->second.begin(), tp->second.end());
+  const std::string base = typeBase(ra->second), arg = typeArg(ra->second);
+
+  if(arg.empty()){
+    if(!tparams.count(base)) return false;            // a concrete return type
+    auto bound = bindTypeParams(call->sval, call, types);
+    auto it = bound.find(base);
+    out = (it != bound.end()) ? it->second : VType::Int;
+    return true;
+  }
+  if(!tparams.count(arg)) return false;               // e.g. urutonde<ijambo>
+  VType b;
+  if(!typeFromName(base, b)) return false;
+  out = b;
+  if(inner){
+    auto bound = bindTypeParams(call->sval, call, types);
+    auto it = bound.find(arg);
+    *inner = (it != bound.end()) ? it->second : VType::Int;
+  }
+  return true;
 }
 
 VType evalType(const NodePtr& n, const std::unordered_map<std::string,VType>& types){
@@ -248,6 +349,10 @@ VType evalType(const NodePtr& n, const std::unordered_map<std::string,VType>& ty
     }
     case NT::Assign: return evalType(n->kids[0], types);
     case NT::Call: {
+      // A generic call is resolved from its arguments, and this comes first:
+      // the body of `mbere<T>` returns a[0], which infers as Int, and that
+      // must not win over what the call site can actually work out.
+      { VType g; if(genericReturn(n, types, g)) return g; }
       // A call through a variable holding a closure returns whatever the
       // lifted function returns.
       auto lv = g_varLambda.find(n->sval);
@@ -296,7 +401,6 @@ void noteIndexedWrite(const NodePtr& n, const std::unordered_map<std::string,VTy
   if(et != VType::Int) g_arrElemTypes[n->kids[0]->sval] = et;
 }
 
-std::unordered_map<std::string,VType> g_fnArrElemTypes;
 
 // Look for `tanga <var>;` inside a function body, where <var> is an array
 // whose element type g_arrElemTypes now knows (from the walk just done).
@@ -368,6 +472,7 @@ void collectTypesRec(const NodePtr& n, std::unordered_map<std::string,VType>& ty
       auto fit = g_fnArrElemTypes.find(n->kids[0]->sval);
       if(fit != g_fnArrElemTypes.end()) g_arrElemTypes[n->sval] = fit->second;
     }
+    noteGenericVarDecl(n, types);
     applyVarDecl(n, types);        // a written type wins over all of the above
     // `reka r = byakunze(x);` or `reka r = gusoma(...);` -- remember what a
     // success would carry, so agaciro(r) and r? read back as the right type.
@@ -456,6 +561,17 @@ void recordTypeArg(const std::string& decl, VType base, const std::string& name,
   if(base == VType::Result) g_resultPayload[name] = a;
 }
 
+// `reka a = shungura(...);` where shungura is generic and returns
+// `urutonde<T>` -- the binding says what the elements are, which is the whole
+// point of writing the signature down.
+void noteGenericVarDecl(const NodePtr& n, const std::unordered_map<std::string,VType>& types){
+  if(n->kids.empty() || n->kids[0]->type != NT::Call) return;
+  VType outT, innerT = VType::Int;
+  if(!genericReturn(n->kids[0], types, outT, &innerT)) return;
+  if(outT == VType::Arr)    g_arrElemTypes[n->sval] = innerT;
+  if(outT == VType::Result) g_resultPayload[n->sval] = innerT;
+}
+
 // A `reka` with a written type. Shared by both inference walks.
 void applyVarDecl(const NodePtr& n, std::unordered_map<std::string,VType>& types){
   if(n->retType.empty()) return;
@@ -525,6 +641,7 @@ void inferPass(const NodePtr& n, std::unordered_map<std::string,VType>& types,
   if(n->type==NT::VarDecl){
     inferPass(n->kids[0], types, fnParamTypes);
     types[n->sval] = evalType(n->kids[0], types);
+    noteGenericVarDecl(n, types);
     applyVarDecl(n, types);
     return;
   }
@@ -1051,7 +1168,8 @@ struct Codegen {
   // `indirect` means argument 0 is a closure block and the call goes through
   // the code pointer in its first slot, rather than to a known label.
   void emitCall(const std::string& target, const std::vector<NodePtr>& args, bool isImport,
-                const std::vector<VType>* paramTypes = nullptr, bool indirect = false){
+                const std::vector<VType>* paramTypes = nullptr, bool indirect = false,
+                const std::set<size_t>* rawArgs = nullptr){
     const int n = (int)args.size();
     const int homeSlots = (n > 4 ? n : 4);            // shadow space is always 4
     const int pad = ((homeSlots + stackSlots) % 2) ? 8 : 0;
@@ -1075,12 +1193,15 @@ struct Codegen {
 
     for(int i = 0; i < n; ++i){
       const VType have = inferType(args[i]);
-      const VType want = (paramTypes && (size_t)i < paramTypes->size())
+      // A generic position takes the caller's 8 bytes exactly as they are.
+      const bool raw = rawArgs && rawArgs->count((size_t)i);
+      const VType want = raw ? have
+                       : (paramTypes && (size_t)i < paramTypes->size())
                          ? (*paramTypes)[i] : have;
       genExpr(args[i]);
-      coerceRax(have, want);
+      if(!raw) coerceRax(have, want);
       a.mov_store_base(X64Asm::RSP, i * 8, X64Asm::RAX);
-      useXmm[(size_t)i] = (want == VType::Float);
+      useXmm[(size_t)i] = !raw && (want == VType::Float);
     }
 
     // Win64 homes argument i at [rsp + 8*i] for BOTH register files, so the
@@ -1651,8 +1772,11 @@ struct Codegen {
     // For a Wandaa function, pass the inferred parameter types so the caller
     // and the callee agree on which register file each argument uses.
     const auto pit = fnParamTypes.find(target);
+    const auto git = g_fnGenericPos.find(target);
     emitCall(target, n->kids, /*isImport=*/false,
-             pit != fnParamTypes.end() ? &pit->second : nullptr);
+             pit != fnParamTypes.end() ? &pit->second : nullptr,
+             /*indirect=*/false,
+             git != g_fnGenericPos.end() ? &git->second : nullptr);
   }
 
   void genPrint(const NodePtr& n){
@@ -1733,16 +1857,36 @@ struct Codegen {
   void applyDeclaredTypes(const std::vector<NodePtr>& funcs,
                           std::unordered_map<std::string,std::vector<VType>>& fnParamTypes){
     for(auto& f : funcs){
+      // `T` in `umurimo mbere<T>(a: urutonde<T>): T` names no concrete type --
+      // it is bound per call site -- so resolving it here would be an error
+      // about a type the programmer never claimed existed.
+      auto mentionsTypeParam = [&](const std::string& a){
+        if(f->typeParams.empty()) return false;
+        const std::string b = typeBase(a), g = typeArg(a);
+        for(const auto& tp : f->typeParams) if(tp == b || tp == g) return true;
+        return false;
+      };
+
       auto& vec = fnParamTypes[f->sval];
       if(vec.size() < f->params.size()) vec.resize(f->params.size(), VType::Int);
+      // Pin every generic position to the integer file. A float already
+      // travels in a general-purpose register as its raw bits everywhere else
+      // in this language, so nothing is lost, and caller and callee agree
+      // without either of them knowing what T is.
+      {
+        auto gp = g_fnGenericPos.find(f->sval);
+        if(gp != g_fnGenericPos.end())
+          for(size_t i : gp->second) if(i < vec.size()) vec[i] = VType::Int;
+      }
       for(size_t i=0;i<f->paramTypes.size() && i<f->params.size();++i){
         if(f->paramTypes[i].empty()) continue;
+        if(mentionsTypeParam(f->paramTypes[i])) continue;
         vec[i] = requireType(f->paramTypes[i],
                              "ku gipimo '" + f->params[i] + "' cya '" + f->sval + "'", f->line);
         g_declaredParamTypes[f->sval][i] = vec[i];
         recordTypeArg(f->paramTypes[i], vec[i], f->params[i], f->line);
       }
-      if(f->retType.empty()) continue;
+      if(f->retType.empty() || mentionsTypeParam(f->retType)) continue;
       const VType rt = requireType(f->retType, "ku bisubizwa na '" + f->sval + "'", f->line);
       g_fnReturnTypes[f->sval] = rt;
       // `urutonde<ijambo>` / `igisubizo<umubare>` also say what the elements or
@@ -1932,6 +2076,28 @@ struct Codegen {
     }
     // Which functions yield closures has to be known before the variables that
     // receive them, so these are two separate walks over the whole program.
+    // Generic declarations, recorded before inference so that a call site can
+    // resolve one. The annotation text is kept verbatim because matching
+    // `urutonde<T>` against an argument needs the shape, not just a VType.
+    g_fnTypeParams.clear();
+    g_fnParamAnnot.clear();
+    g_fnRetAnnot.clear();
+    g_fnGenericPos.clear();
+    for(auto& f : funcs){
+      if(!f->typeParams.empty()) g_fnTypeParams[f->sval] = f->typeParams;
+      for(size_t i=0;i<f->paramTypes.size();++i){
+        if(f->paramTypes[i].empty()) continue;
+        g_fnParamAnnot[f->sval][i] = f->paramTypes[i];
+        // A parameter whose type IS the type parameter carries a value of
+        // whatever type the caller had. `urutonde<T>` is not one of these: it
+        // is an array pointer whatever T turns out to be.
+        for(const auto& tp : f->typeParams)
+          if(tp == typeBase(f->paramTypes[i]) && typeArg(f->paramTypes[i]).empty())
+            g_fnGenericPos[f->sval].insert(i);
+      }
+      if(!f->retType.empty()) g_fnRetAnnot[f->sval] = f->retType;
+    }
+
     for(auto& f : funcs) noteFnLambda(f->kids[0], f->sval);
     noteLambdaVars(program);
     checkSelfCapture(program);

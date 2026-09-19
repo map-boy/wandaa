@@ -183,8 +183,17 @@ struct Parser {
   NodePtr funcDecl(){
     advance();
     std::string name = expect(Tok::IDENT,"izina ry'umurimo").text;
-    expect(Tok::LPAREN,"'('");
     auto n=mk(NT::FuncDecl); n->sval=name;
+    // umurimo mbere<T>(a: urutonde<T>): T { ... }
+    // Unambiguous: a declaration is not an expression, so `<` here can only
+    // open a type-parameter list.
+    if(check(Tok::LT)){
+      advance();
+      n->typeParams.push_back(expect(Tok::IDENT,"izina ry'ubwoko rusange").text);
+      while(check(Tok::COMMA)){ advance(); n->typeParams.push_back(expect(Tok::IDENT,"izina ry'ubwoko rusange").text); }
+      expect(Tok::GT,"'>'");
+    }
+    expect(Tok::LPAREN,"'('");
     if(!check(Tok::RPAREN)){
       paramInto(n);
       while(check(Tok::COMMA)){ advance(); paramInto(n); }

@@ -1,0 +1,71 @@
+# Ubwoko rusange -- generics. `umurimo mbere<T>(a: urutonde<T>): T` isaba
+# nta monomorphisation: buri gaciro muri Wandaa ni bayiti 8 muri register,
+# bityo UMUBIRI UMWE ukorera buri T.
+#
+# Generics need no monomorphisation here: every Wandaa value is 8 bytes in a
+# register, so ONE body serves every T and generics are purely a compile-time
+# device for working out what a call gives back. Inside the body T is opaque,
+# which is correct -- the code there only moves 8 bytes around.
+
+umurimo mbere<T>(a: urutonde<T>): T { tanga a[0]; }
+
+reka amazina: urutonde<ijambo> = ["Ana", "Eric", "Keza"];
+reka ibipimo: urutonde<ibice> = [1.5, 2.5];
+reka imibare = [7, 8, 9];
+
+# The same function at three different element types.
+andika(mbere(amazina) + "!");
+andika(mbere(ibipimo));
+andika(mbere(imibare));
+
+# A parameter whose type IS the type parameter carries the caller's 8 bytes
+# through untouched, so one function works for a string, an integer and a
+# float without converting any of them.
+umurimo iyo<T>(x: T): T { tanga x; }
+andika(iyo("ijambo") + "!");
+andika(iyo(5));
+andika(iyo(2.5));
+
+# Two type parameters.
+umurimo iya_mbere<A, B>(x: A, y: B): A { tanga x; }
+andika(iya_mbere("ijambo", 5) + "!");
+andika(iya_mbere(7, "ijambo"));
+
+# Generic and concrete parameters mix freely.
+umurimo subiramo<T>(x: T, n: umubare): T { tanga x; }
+andika(subiramo("a", 3) + "!");
+andika(subiramo(2.5, 3));
+
+# A result whose payload is the type parameter: this is the `unwrap_or` of
+# the language, and it is type-correct at every call site.
+umurimo cyangwabyo<T>(r: igisubizo<T>, d: T): T {
+  niba (byarakunze(r)) { tanga agaciro(r); }
+  tanga d;
+}
+reka ok: igisubizo<ijambo> = byakunze("ibonetse");
+reka nabi: igisubizo<ijambo> = byanze("ntibonetse");
+andika(cyangwabyo(ok, "nta kintu") + "!");
+andika(cyangwabyo(nabi, "nta kintu") + "!");
+
+# Returning a generic container keeps what it holds.
+umurimo pakira<T>(x: T): igisubizo<T> { tanga byakunze(x); }
+reka p = pakira("mu gisubizo");
+andika(agaciro(p) + "!");
+
+umurimo kubyaza<T>(a: urutonde<T>): urutonde<T> {
+  reka b = urutonde(ubunini(a) * 2);
+  reka i = 0;
+  mugihe (i < ubunini(a)) {
+    b[i] = a[i];
+    b[i + ubunini(a)] = a[i];
+    i = i + 1;
+  }
+  tanga b;
+}
+reka kabiri = kubyaza(amazina);
+andika(ubunini(kabiri));
+andika(kabiri[4] + "!");
+
+# A generic calling another generic.
+umurimo inyuze<T>(x: T): T { tanga iyo(x); }
+andika(inyuze("hanyuze") + "!");

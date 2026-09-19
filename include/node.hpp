@@ -40,6 +40,10 @@ struct Node {
   // VarDecl. Empty when not annotated. Held as text (e.g. "urutonde<ijambo>")
   // because VType lives in codegen, not in the AST.
   std::string retType;
+  // Type parameters of a generic FuncDecl: `umurimo mbere<T>(...)`. Empty for
+  // an ordinary function. A name listed here is NOT a concrete type -- it is
+  // bound to one at each call site.
+  std::vector<std::string> typeParams;
   int line = 0;
 };
 
