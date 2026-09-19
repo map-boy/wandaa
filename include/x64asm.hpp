@@ -79,6 +79,13 @@ public:
     void sub(Reg dst, Reg src) { rmReg(0x29, dst, src); }
     void cmp(Reg dst, Reg src) { rmReg(0x39, dst, src); }
     void xorr(Reg dst, Reg src){ rmReg(0x31, dst, src); }
+    void andr(Reg dst, Reg src){ rmReg(0x21, dst, src); }
+    void orr (Reg dst, Reg src){ rmReg(0x09, dst, src); }
+    // Shift by CL. The count register is fixed by the encoding -- there is no
+    // shift-by-any-register form -- so the caller puts it in RCX first.
+    void shl_cl(Reg dst){ emitRex(true,false,false,dst>=8); emit(0xD3); emit(modrm(3,4,dst)); }
+    void shr_cl(Reg dst){ emitRex(true,false,false,dst>=8); emit(0xD3); emit(modrm(3,5,dst)); }
+    void sar_cl(Reg dst){ emitRex(true,false,false,dst>=8); emit(0xD3); emit(modrm(3,7,dst)); }
     void test(Reg dst, Reg src){ rmReg(0x85, dst, src); }
 
     void xor_eax_eax() { emit(0x31); emit(0xC0); } // 32-bit zero idiom, no REX

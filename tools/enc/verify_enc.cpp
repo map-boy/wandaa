@@ -297,6 +297,22 @@ int main(int argc, char** argv) {
     h.a.defineLabel("Lfwd");
     h.note("ret");             h.a.ret();
 
+    // ---- and / or : all 256 REX.R/REX.B combinations ----
+    for (int d = 0; d < 16; ++d)
+        for (int sR = 0; sR < 16; ++sR) {
+            h.note(std::string("and ") + RN[d] + ", " + RN[sR]);
+            h.a.andr(R(d), R(sR));
+            h.note(std::string("or ") + RN[d] + ", " + RN[sR]);
+            h.a.orr(R(d), R(sR));
+        }
+
+    // ---- shl / shr / sar by cl : all 16 destinations ----
+    for (int d = 0; d < 16; ++d) {
+        h.note(std::string("shl ") + RN[d] + ", cl"); h.a.shl_cl(R(d));
+        h.note(std::string("shr ") + RN[d] + ", cl"); h.a.shr_cl(R(d));
+        h.note(std::string("sar ") + RN[d] + ", cl"); h.a.sar_cl(R(d));
+    }
+
     // ---- call r64 : indirect, all 16 registers (REX.B boundary at r8) ----
     for (int r = 0; r < 16; ++r) {
         h.note(std::string("call ") + RN[r]);

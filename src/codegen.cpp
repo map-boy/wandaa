@@ -1083,6 +1083,8 @@ struct Checker {
       {"urutonde",1},{"mu_bice",1},{"mu_mubare_wuzuye",1},
       {"byakunze",1},{"byanze",1},{"byarakunze",1},{"agaciro",1},{"ikosa",1},
       {"ongeraho",2},
+      {"biti_na",2},{"biti_cyangwa",2},{"biti_gutandukana",2},
+      {"biti_ibumoso",2},{"biti_iburyo",2},
       {"inkoranya",0},{"shyiramo",3},{"fata",2},{"arimo",2}
     };
     return m;
@@ -1965,6 +1967,32 @@ struct Codegen {
         if(f != fnParamTypes.end()) pt = &f->second;
       }
       emitCall(n->sval, args, false, pt, true);
+      return;
+    }
+
+    // Bitwise operations. A systems language needs them -- a binary file
+    // format, a hash, an instruction encoder -- and Wandaa had none at all.
+    // They are builtins rather than operators because `>>` cannot be lexed as
+    // one token without breaking `urutonde<igisubizo<umubare>>`, and one
+    // consistent spelling beats a mix of the two.
+    if(!g_declaredFns.count(n->sval) &&
+       (n->sval=="biti_na" || n->sval=="biti_cyangwa" || n->sval=="biti_gutandukana" ||
+        n->sval=="biti_ibumoso" || n->sval=="biti_iburyo")){
+      if(n->kids.size() != 2)
+        throw std::runtime_error("'" + n->sval + "' isaba ibipimo bibiri");
+      const bool isShift = (n->sval=="biti_ibumoso" || n->sval=="biti_iburyo");
+      genExpr(n->kids[0]);
+      pushTmp(X64Asm::RAX);
+      genExpr(n->kids[1]);
+      // The shift count has to be in CL: the encoding has no shift-by-any-
+      // register form.
+      a.mov_reg(isShift ? X64Asm::RCX : X64Asm::RBX, X64Asm::RAX);
+      popTmp(X64Asm::RAX);
+      if(n->sval=="biti_na")               a.andr(X64Asm::RAX, X64Asm::RBX);
+      else if(n->sval=="biti_cyangwa")     a.orr(X64Asm::RAX, X64Asm::RBX);
+      else if(n->sval=="biti_gutandukana") a.xorr(X64Asm::RAX, X64Asm::RBX);
+      else if(n->sval=="biti_ibumoso")     a.shl_cl(X64Asm::RAX);
+      else                                 a.shr_cl(X64Asm::RAX);
       return;
     }
 

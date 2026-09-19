@@ -610,6 +610,37 @@ factor of one half, and as with `ongeraho` the old table is not freed.
 
 ---
 
+## 8d. Ibikorwa ku biti — Bitwise operations
+
+Ururimi rukoreshwa mu kwandika sisitemu rukeneye gukora ku biti: imiterere ya
+dosiye ya binary, hash, cyangwa encoder y'amabwiriza.
+
+| Umurimo | Icyo ukora |
+|---|---|
+| `biti_na(a, b)` | AND ku biti byose 64 |
+| `biti_cyangwa(a, b)` | OR |
+| `biti_gutandukana(a, b)` | XOR |
+| `biti_ibumoso(a, n)` | kwimura ibumoso (shift left) |
+| `biti_iburyo(a, n)` | kwimura iburyo (shift right) |
+
+```wandaa
+umurimo modrm(md: umubare, reg: umubare, rm: umubare): umubare {
+  tanga biti_cyangwa(biti_ibumoso(md, 6),
+         biti_cyangwa(biti_ibumoso(biti_na(reg, 7), 3), biti_na(rm, 7)));
+}
+andika(modrm(3, 2, 3));        # 211
+```
+
+Ni ibikorwa fatizo, si ibimenyetso, kubera impamvu imwe isobanutse: `>>`
+ntibishoboka kuyibona nk'ikimenyetso kimwe hatangijwe ikibazo muri
+`urutonde<igisubizo<umubare>>`, aho `>>` ari ibimenyetso bibiri. These are
+builtins rather than operators for one concrete reason: `>>` cannot be lexed
+as a single token without breaking `urutonde<igisubizo<umubare>>`, where the
+two closing angles are two separate tokens. One consistent spelling beats a
+mix of operators and calls.
+
+---
+
 ## 9. Ibikorwa fatizo — Builtins
 
 | Umurimo | Icyo ukora |
@@ -625,6 +656,7 @@ factor of one half, and as with `ongeraho` the old table is not freed.
 | `urutonde(n)` | new zero-filled array of n elements |
 | `ongeraho(a, x)` | append x, returning the array to keep — reba igice cya 8 |
 | `inkoranya()` / `shyiramo` / `fata` / `arimo` | inkoranya (map) — reba igice cya 8c |
+| `biti_na` / `biti_cyangwa` / `biti_gutandukana` / `biti_ibumoso` / `biti_iburyo` | ibikorwa ku biti — reba igice cya 8d |
 | `ijambo(p)` | raw NUL-terminated pointer → Wandaa string |
 | `soma(dosiye)` | read a whole file as a string |
 | `andikamo(dosiye, ibirimo)` | write a string to a file |

@@ -1,0 +1,49 @@
+# Ibikorwa ku biti -- bitwise operations. A systems language needs them: a
+# binary file format, a hash, an instruction encoder. They are builtins
+# rather than operators because `>>` cannot be lexed as a single token
+# without breaking `urutonde<igisubizo<umubare>>`.
+
+andika(biti_na(12, 10));              # 1100 & 1010 = 1000
+andika(biti_cyangwa(12, 10));         # 1100 | 1010 = 1110
+andika(biti_gutandukana(12, 10));     # 1100 ^ 1010 = 0110
+andika(biti_ibumoso(1, 8));           # 1 << 8
+andika(biti_iburyo(256, 4));          # 256 >> 4
+
+# Masking a negative value: the operations are on all 64 bits.
+andika(biti_na(0 - 1, 255));
+andika(biti_na(0 - 1, 65535));
+
+# Shifting by zero changes nothing, and shifting out everything gives zero.
+andika(biti_ibumoso(7, 0));
+andika(biti_iburyo(7, 8));
+
+# What this is actually for. A REX prefix is 0x40 with four one-bit fields,
+# and a ModRM byte is three fields packed into one byte -- exactly the shape
+# of the encoder the bootstrap still needs.
+umurimo rex(w: umubare, r: umubare, x: umubare, b: umubare): umubare {
+  tanga biti_cyangwa(64,
+         biti_cyangwa(biti_ibumoso(w, 3),
+          biti_cyangwa(biti_ibumoso(r, 2),
+           biti_cyangwa(biti_ibumoso(x, 1), b))));
+}
+umurimo modrm(md: umubare, reg: umubare, rm: umubare): umubare {
+  tanga biti_cyangwa(biti_ibumoso(md, 6),
+         biti_cyangwa(biti_ibumoso(biti_na(reg, 7), 3), biti_na(rm, 7)));
+}
+
+andika(rex(1, 0, 0, 0));              # 0x48
+andika(rex(1, 0, 0, 1));              # 0x49
+andika(rex(1, 1, 0, 1));              # 0x4D
+andika(modrm(3, 0, 0));               # 0xC0
+andika(modrm(3, 2, 3));               # 0xD3
+andika(modrm(1, 7, 5));               # 0x7D
+
+# Pulling the bytes of a 32-bit value out, little end first -- what emitting
+# a displacement or an immediate comes down to.
+umurimo bayiti(v: umubare, i: umubare): umubare {
+  tanga biti_na(biti_iburyo(v, i * 8), 255);
+}
+andika(bayiti(305419896, 0));         # 0x12345678 -> 0x78
+andika(bayiti(305419896, 1));         # 0x56
+andika(bayiti(305419896, 2));         # 0x34
+andika(bayiti(305419896, 3));         # 0x12
