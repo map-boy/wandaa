@@ -93,6 +93,10 @@ std::unordered_map<std::string,std::string> g_varLambda;
 // identity across the return boundary, the same job g_fnArrElemTypes does for
 // an array's element type.
 std::unordered_map<std::string,std::string> g_fnLambda;
+// Parameter types that were WRITTEN DOWN, by position. Separate from
+// fnParamTypes, which mixes declarations with what inference guessed: only a
+// declared type is certain enough to reject a call over.
+std::unordered_map<std::string,std::map<size_t,VType>> g_declaredParamTypes;
 
 std::unordered_map<std::string,VType> g_resultPayload;     // variable -> payload
 std::unordered_map<std::string,VType> g_fnResultPayload;   // function -> payload
@@ -131,6 +135,10 @@ struct FnInfo {
 //  backend. This logic never touched code emission and is unchanged, so the
 //  two backends agree on every variable slot and every inferred type.
 // ===========================================================================
+
+// Defined below, with the rest of the annotation handling; used by both
+// inference walks, which appear before it.
+void applyVarDecl(const NodePtr& n, std::unordered_map<std::string,VType>& types);
 
 void collectNames(const NodePtr& n, std::vector<std::string>& out){
   if(!n) return;
@@ -360,6 +368,7 @@ void collectTypesRec(const NodePtr& n, std::unordered_map<std::string,VType>& ty
       auto fit = g_fnArrElemTypes.find(n->kids[0]->sval);
       if(fit != g_fnArrElemTypes.end()) g_arrElemTypes[n->sval] = fit->second;
     }
+    applyVarDecl(n, types);        // a written type wins over all of the above
     // `reka r = byakunze(x);` or `reka r = gusoma(...);` -- remember what a
     // success would carry, so agaciro(r) and r? read back as the right type.
     if(evalType(n->kids[0], types) == VType::Result){
@@ -391,7 +400,77 @@ void scanRecordLits(const NodePtr& n, std::unordered_map<std::string,VType>& typ
   for(auto& c : n->kids) scanRecordLits(c, types);
 }
 
+// ===========================================================================
+//  Type annotations
+//
+//  `izina: ijambo` on a parameter, a field, a `reka` or a return type. Every
+//  annotation is OPTIONAL: where one is absent, inference does exactly what it
+//  did before, so no existing .waa file changes meaning (GOVERNANCE principle
+//  5). Where one is present it WINS over inference, which is the point --
+//  inference falls back to Int for anything it cannot work out, and a written
+//  type is how the programmer says the fallback is wrong.
+// ===========================================================================
+
+std::string typeBase(const std::string& t){
+  const auto p = t.find('<');
+  return p == std::string::npos ? t : t.substr(0, p);
+}
+// The argument of `urutonde<ijambo>`, or "" when the type has none.
+std::string typeArg(const std::string& t){
+  const auto p = t.find('<');
+  if(p == std::string::npos || t.size() < p + 2) return "";
+  return t.substr(p + 1, t.size() - p - 2);
+}
+
+bool typeFromName(const std::string& t, VType& out){
+  const std::string b = typeBase(t);
+  if(b=="umubare")   { out = VType::Int;    return true; }
+  if(b=="ibice")     { out = VType::Float;  return true; }
+  if(b=="ijambo")    { out = VType::Str;    return true; }
+  if(b=="urutonde")  { out = VType::Arr;    return true; }
+  if(b=="igisubizo") { out = VType::Result; return true; }
+  if(g_recordTypes.count(b)) { out = VType::Record; return true; }
+  return false;
+}
+
+// Resolve or refuse. A misspelled type has to be an error rather than a silent
+// fallback to Int, or the annotation would be worse than useless.
+VType requireType(const std::string& t, const std::string& where, int line){
+  VType v;
+  if(typeFromName(t, v)) return v;
+  throw std::runtime_error("ubwoko butazwi '" + typeBase(t) + "' " + where +
+                           " ku murongo " + std::to_string(line) +
+                           ". Ubwoko buzwi: umubare, ibice, ijambo, urutonde, igisubizo, "
+                           "cyangwa izina ry'ubwoko bwatangajwe na 'ubwoko'");
+}
+
+// A type argument on a NAMED thing -- a parameter or a variable -- says what
+// its elements or its payload are. This is what replaces the guesswork:
+// `reka a: urutonde<ibice> = urutonde(3);` states outright what noteIndexedWrite
+// could previously only infer from a later assignment.
+void recordTypeArg(const std::string& decl, VType base, const std::string& name, int line){
+  const std::string arg = typeArg(decl);
+  if(arg.empty()) return;
+  const VType a = requireType(arg, "ku '" + name + "'", line);
+  if(base == VType::Arr)    g_arrElemTypes[name] = a;
+  if(base == VType::Result) g_resultPayload[name] = a;
+}
+
+// A `reka` with a written type. Shared by both inference walks.
+void applyVarDecl(const NodePtr& n, std::unordered_map<std::string,VType>& types){
+  if(n->retType.empty()) return;
+  const VType t = requireType(n->retType, "ku kigereranyo '" + n->sval + "'", n->line);
+  types[n->sval] = t;
+  recordTypeArg(n->retType, t, n->sval, n->line);
+}
+
 void registerRecordTypes(const NodePtr& program){
+  // Every record NAME first, so a field may be annotated with a record type
+  // declared further down the file. The layouts are filled in below.
+  for(auto& k : program->kids)
+    if(k->type == NT::RecordDecl && !g_recordTypes.count(k->sval))
+      g_recordTypes[k->sval] = RecordTypeInfo{};
+
   for(auto& k : program->kids){
     if(k->type == NT::RecordDecl){
       // Fields are packed in declaration order with NO automatic alignment
@@ -411,7 +490,13 @@ void registerRecordTypes(const NodePtr& program){
         info.fieldNames.push_back(f);
         info.fieldOffset[f] = off;
         info.fieldWidth[f]  = w;
+        // A declared field type wins; without one scanRecordLits infers it
+        // from the values a constructor is called with.
         info.fieldType[f]   = VType::Int;
+        if(i < k->paramTypes.size() && !k->paramTypes[i].empty())
+          info.fieldType[f] = requireType(k->paramTypes[i],
+                                          "ku mwanya '" + f + "' muri '" + k->sval + "'",
+                                          k->line);
         off += w;
       }
       info.totalSize = off;
@@ -440,6 +525,7 @@ void inferPass(const NodePtr& n, std::unordered_map<std::string,VType>& types,
   if(n->type==NT::VarDecl){
     inferPass(n->kids[0], types, fnParamTypes);
     types[n->sval] = evalType(n->kids[0], types);
+    applyVarDecl(n, types);
     return;
   }
   if(n->type==NT::Call){
@@ -506,7 +592,13 @@ void inferPass(const NodePtr& n, std::unordered_map<std::string,VType>& types,
 //  explain, which for this language counts.
 // ===========================================================================
 
-struct Lifted { std::string name; std::vector<std::string> params; NodePtr body; };
+struct Lifted {
+  std::string name;
+  std::vector<std::string> params;
+  std::vector<std::string> paramTypes;   // parallel to params, "" where unannotated
+  std::string retType;
+  NodePtr body;
+};
 std::vector<Lifted> g_lifted;
 int g_lambdaCounter = 0;
 
@@ -610,10 +702,14 @@ void liftLambdas(const NodePtr& n, const std::set<std::string>& callables){
     usesRec(n->kids[0], bound, callables, caps, seen);
     g_lambdaCaptures[nm] = caps;
 
-    std::vector<std::string> ps;
+    std::vector<std::string> ps, pts;
     ps.push_back("__ctx");                       // the hidden first argument
-    for(auto& p : n->params) ps.push_back(p);
-    g_lifted.push_back({nm, ps, n->kids[0]});
+    pts.push_back("");                           // which is never annotated
+    for(size_t i=0;i<n->params.size();++i){
+      ps.push_back(n->params[i]);
+      pts.push_back(i < n->paramTypes.size() ? n->paramTypes[i] : std::string());
+    }
+    g_lifted.push_back({nm, ps, pts, n->retType, n->kids[0]});
 
     liftLambdas(n->kids[0], callables);          // nested lambdas lift too
     return;
@@ -641,6 +737,23 @@ struct Checker {
   std::unordered_map<std::string,size_t> fnArity;      // user functions
   std::unordered_map<std::string,size_t> externArity;  // hanze declarations
   std::vector<std::string> errors;
+
+  // Is an argument acceptable for a declared parameter type?
+  //
+  // Int is what inference falls back to when it cannot work a type out, so an
+  // Int argument is treated as "unknown, allow it" UNLESS the expression is
+  // plainly a number -- a literal, or arithmetic on literals. Otherwise every
+  // unannotated helper passing a value through would be rejected.
+  static bool argFits(const NodePtr& a, VType have, VType want){
+    if(have == want) return true;
+    if(want == VType::Float && have == VType::Int) return true;   // promotion
+    if(have == VType::Int){
+      const bool certainlyNumber = (a->type == NT::Num && !a->isFloat);
+      if(!certainlyNumber) return true;                            // unknown, allow
+      return want == VType::Int || want == VType::Float;
+    }
+    return false;
+  }
 
   // Builtin name -> exact argument count.
   static const std::unordered_map<std::string,size_t>& builtinArity(){
@@ -713,6 +826,22 @@ struct Checker {
         if(known && given != want)
           err(n, "umurimo '" + name + "' usaba ibipimo " + std::to_string(want) +
                  ", wahawe " + std::to_string(given));
+
+        // Arguments against DECLARED parameter types. Only declarations are
+        // checked: fnParamTypes also holds what inference guessed, and
+        // rejecting a call over a guess would reject working programs.
+        auto dp = g_declaredParamTypes.find(name);
+        if(dp != g_declaredParamTypes.end()){
+          for(size_t i=0;i<n->kids.size();++i){
+            auto want_it = dp->second.find(i);
+            if(want_it == dp->second.end()) continue;
+            const VType w = want_it->second;
+            const VType h = evalType(n->kids[i], types);
+            if(!argFits(n->kids[i], h, w))
+              err(n, "igipimo cya " + std::to_string(i+1) + " cya '" + name +
+                     "' gisaba " + typeName(w) + ", cyahawe " + typeName(h));
+          }
+        }
         break;
       }
 
@@ -1600,6 +1729,35 @@ struct Codegen {
     }
   }
 
+  // Parameter, return, element and payload types written down in the source.
+  void applyDeclaredTypes(const std::vector<NodePtr>& funcs,
+                          std::unordered_map<std::string,std::vector<VType>>& fnParamTypes){
+    for(auto& f : funcs){
+      auto& vec = fnParamTypes[f->sval];
+      if(vec.size() < f->params.size()) vec.resize(f->params.size(), VType::Int);
+      for(size_t i=0;i<f->paramTypes.size() && i<f->params.size();++i){
+        if(f->paramTypes[i].empty()) continue;
+        vec[i] = requireType(f->paramTypes[i],
+                             "ku gipimo '" + f->params[i] + "' cya '" + f->sval + "'", f->line);
+        g_declaredParamTypes[f->sval][i] = vec[i];
+        recordTypeArg(f->paramTypes[i], vec[i], f->params[i], f->line);
+      }
+      if(f->retType.empty()) continue;
+      const VType rt = requireType(f->retType, "ku bisubizwa na '" + f->sval + "'", f->line);
+      g_fnReturnTypes[f->sval] = rt;
+      // `urutonde<ijambo>` / `igisubizo<umubare>` also say what the elements or
+      // the payload are, which is exactly what inference had to guess before.
+      const std::string arg = typeArg(f->retType);
+      if(!arg.empty()){
+        const VType a = requireType(arg, "ku bisubizwa na '" + f->sval + "'", f->line);
+        if(rt == VType::Arr)    g_fnArrElemTypes[f->sval] = a;
+        if(rt == VType::Result) g_fnResultPayload[f->sval] = a;
+      }
+    }
+  }
+
+  // A type argument on a NAMED thing (a parameter or a variable) records what
+  // its elements or payload are, under that name.
   void genFunction(const std::string& name, const std::vector<std::string>& params, const NodePtr& body){
     // A lifted lambda body: its captures need frame slots of their own, filled
     // from the closure block in the prologue.
@@ -1718,6 +1876,7 @@ struct Codegen {
     g_resultPayload.clear();
     g_fnResultPayload.clear();
     g_lambdaCaptureTypes.clear();
+    g_declaredParamTypes.clear();
     g_recordTypes.clear();
     g_varRecordType.clear();
     registerRecordTypes(program);
@@ -1764,6 +1923,8 @@ struct Codegen {
       auto fd = mk(NT::FuncDecl);
       fd->sval = L.name;
       fd->params = L.params;
+      fd->paramTypes = L.paramTypes;
+      fd->retType = L.retType;
       fd->kids.push_back(L.body);
       funcs.push_back(fd);
       callables.insert(L.name);
@@ -1812,6 +1973,10 @@ struct Codegen {
           g_fnReturnTypes[f->sval] = rt;
       }
     }
+
+    // Declared types win. Applied after the inference loop so nothing it
+    // worked out can overwrite what the programmer actually wrote.
+    applyDeclaredTypes(funcs, fnParamTypes);
 
     // --- 0. semantic checks -----------------------------------------------
     // Runs after inference (so types are known) but before a single byte is

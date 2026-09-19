@@ -69,8 +69,16 @@ struct Parser {
     auto field = [&](){
       n->params.push_back(expect(Tok::IDENT,"izina ry'umwanya").text);
       int w = 0;
-      if(check(Tok::COLON)){ advance(); w = (int)expect(Tok::NUM,"ubunini bw'umwanya").num; }
+      std::string t;
+      // After `:` a NUMBER is a byte width (`family:2`, for matching a C
+      // struct) and a NAME is a type (`izina: ijambo`). They never collide.
+      if(check(Tok::COLON)){
+        advance();
+        if(check(Tok::NUM)) w = (int)expect(Tok::NUM,"ubunini bw'umwanya").num;
+        else                t = typeExpr();
+      }
       n->widths.push_back(w);
+      n->paramTypes.push_back(t);
     };
     if(!check(Tok::RBRACE)){
       field();
@@ -116,13 +124,37 @@ struct Parser {
     return n;
   }
 
+  // A type in an annotation: `ijambo`, `urutonde<ijambo>`,
+  // `igisubizo<umubare>`. `<` and `>` are already ordinary tokens, and Wandaa
+  // has no shift operator, so `urutonde<igisubizo<umubare>>` needs nothing
+  // special -- the two closing angles are simply two tokens.
+  std::string typeExpr(){
+    std::string t = expect(Tok::IDENT, "izina ry'ubwoko").text;
+    if(check(Tok::LT)){
+      advance();
+      t += "<" + typeExpr() + ">";
+      expect(Tok::GT, "'>'");
+    }
+    return t;
+  }
+
+  // `izina` or `izina: ubwoko`
+  void paramInto(const NodePtr& n){
+    n->params.push_back(expect(Tok::IDENT,"parameter").text);
+    std::string t;
+    if(check(Tok::COLON)){ advance(); t = typeExpr(); }
+    n->paramTypes.push_back(t);
+  }
+
   NodePtr varDecl(){
     advance();
     std::string name = expect(Tok::IDENT,"izina ry'ikigereranyo").text;
+    std::string declared;
+    if(check(Tok::COLON)){ advance(); declared = typeExpr(); }
     expect(Tok::EQ,"'='");
     auto val = expression();
     expect(Tok::SEMI,"';'");
-    auto n=mk(NT::VarDecl); n->sval=name; n->kids.push_back(val); return n;
+    auto n=mk(NT::VarDecl); n->sval=name; n->retType=declared; n->kids.push_back(val); return n;
   }
 
   NodePtr ifStmt(){
@@ -154,10 +186,11 @@ struct Parser {
     expect(Tok::LPAREN,"'('");
     auto n=mk(NT::FuncDecl); n->sval=name;
     if(!check(Tok::RPAREN)){
-      n->params.push_back(expect(Tok::IDENT,"parameter").text);
-      while(check(Tok::COMMA)){ advance(); n->params.push_back(expect(Tok::IDENT,"parameter").text); }
+      paramInto(n);
+      while(check(Tok::COMMA)){ advance(); paramInto(n); }
     }
     expect(Tok::RPAREN,"')'");
+    if(check(Tok::COLON)){ advance(); n->retType = typeExpr(); }
     n->kids.push_back(block());
     return n;
   }
@@ -169,10 +202,11 @@ struct Parser {
     expect(Tok::LPAREN,"'('");
     auto n=mk(NT::Lambda);
     if(!check(Tok::RPAREN)){
-      n->params.push_back(expect(Tok::IDENT,"parameter").text);
-      while(check(Tok::COMMA)){ advance(); n->params.push_back(expect(Tok::IDENT,"parameter").text); }
+      paramInto(n);
+      while(check(Tok::COMMA)){ advance(); paramInto(n); }
     }
     expect(Tok::RPAREN,"')'");
+    if(check(Tok::COLON)){ advance(); n->retType = typeExpr(); }
     n->kids.push_back(block());
     return n;
   }

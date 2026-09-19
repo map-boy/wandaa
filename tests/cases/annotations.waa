@@ -1,0 +1,49 @@
+# Ubwoko bwanditswe -- written types. Every annotation is optional; where one
+# is absent inference works exactly as before. Where one is present it wins,
+# which is the point: inference falls back to "umubare" for anything it cannot
+# work out, and a written type is how you say that fallback is wrong.
+
+umurimo hura(a: ijambo, b: ijambo): ijambo { tanga a + b; }
+andika(hura("mwiriwe ", "Wandaa"));
+
+# A written return type is what makes a closure passed as a PARAMETER usable:
+# without it the call site has no idea the result is a string.
+umurimo koresha(g): ijambo { tanga g("Ana"); }
+reka indamukanyo = umurimo(s: ijambo): ijambo { tanga "mwiriwe " + s; };
+andika(koresha(indamukanyo));
+
+# A type argument says what an array holds, so a float element is printed as a
+# float instead of as its raw bit pattern.
+reka ibipimo: urutonde<ibice> = urutonde(3);
+ibipimo[0] = 1.5;
+ibipimo[1] = 2.25;
+andika(ibipimo[0] + ibipimo[1]);
+
+# Same for what a result carries.
+umurimo shakisha(k: umubare): igisubizo<ijambo> {
+  niba (k == 0) { tanga byanze("ntabwo ribonetse"); }
+  tanga byakunze("ibonetse");
+}
+andika(agaciro(shakisha(1)) + "!");
+andika(ikosa(shakisha(0)));
+
+# Record fields take types too. The byte-width form (`family:2`) is unchanged:
+# after `:` a number is a width and a name is a type, and they never collide.
+ubwoko Umuntu { izina: ijambo, imyaka: umubare }
+reka u = Umuntu("Ana", 30);
+andika(u.izina + " afite imyaka " + mu_ijambo(u.imyaka));
+
+ubwoko Ipaki { ubwoko_bwayo: 2, uburebure: 4 }
+reka pk = Ipaki(7, 4000);
+andika(pk.ubwoko_bwayo);
+andika(pk.uburebure);
+
+# An integer passed where a float is declared is promoted, as it is everywhere
+# else in the language.
+umurimo kabiri(x: ibice): ibice { tanga x * 2.0; }
+andika(kabiri(3));
+andika(kabiri(1.25));
+
+# Unannotated code keeps working untouched.
+umurimo teranya(a, b) { tanga a + b; }
+andika(teranya(2, 3));

@@ -258,6 +258,84 @@ Ibigomba kumenyekana — the limits:
 
 ---
 
+## 6d. Ubwoko bwanditswe — Written types
+
+Buri annotation ni **guhitamo**, si itegeko. Aho itabaho, compiler ikomeza
+kwikekera ubwoko nk'uko yabigenzaga. Aho ihari, ni yo ifite ijambo rya nyuma.
+
+Every annotation is **optional**. Where one is absent, inference does exactly
+what it did before, so every existing `.waa` file keeps compiling and keeps its
+meaning. Where one is present it **wins** — inference falls back to `umubare`
+for anything it cannot work out, and a written type is how you say that
+fallback is wrong.
+
+```wandaa
+umurimo hura(a: ijambo, b: ijambo): ijambo { tanga a + b; }
+reka izina: ijambo = hura("Wan", "daa");
+```
+
+| Ubwoko | Icyo ari cyo |
+|---|---|
+| `umubare` | umubare wuzuye (64-bit signed integer) |
+| `ibice` | umubare w'ibice (f64) |
+| `ijambo` | string |
+| `urutonde` | array |
+| `igisubizo` | result (igice cya 8b) |
+| izina ry'ubwoko | ubwoko bwatangajwe na `ubwoko` |
+
+### Ubwoko bufite igipimo — type arguments
+
+`urutonde<ibice>` na `igisubizo<ijambo>` bivuga icyo urutonde rurimo n'icyo
+igisubizo gitwaye. `urutonde<ibice>` and `igisubizo<ijambo>` say what an array
+holds and what a result carries — which is exactly what inference previously
+had to guess:
+
+```wandaa
+reka ibipimo: urutonde<ibice> = urutonde(3);
+ibipimo[0] = 1.5;
+andika(ibipimo[0]);            # 1.5, si imibare y'ibice bya raw
+
+umurimo shakisha(k: umubare): igisubizo<ijambo> {
+  niba (k == 0) { tanga byanze("ntabwo ribonetse"); }
+  tanga byakunze("ibonetse");
+}
+andika(agaciro(shakisha(1)) + "!");
+```
+
+Ni na ko bikemura aho closure ihawe nka parameter — a written return type is
+what makes a closure passed as a *parameter* usable, since otherwise the call
+site has no idea what it gives back:
+
+```wandaa
+umurimo koresha(g): ijambo { tanga g("Ana"); }
+```
+
+### Mu bwoko — record fields
+
+```wandaa
+ubwoko Umuntu { izina: ijambo, imyaka: umubare }
+```
+
+Nyuma ya `:`, **umubare ni ubugari bw'ibice** (`family:2`, kugira ngo bihuze na
+struct ya C) naho **izina ni ubwoko**. After `:` a number is a byte width and a
+name is a type; they never collide, so the packed-record form is unchanged.
+
+### Amakosa afatwa — what this rejects
+
+Ubwoko bwanditswe butuma compiler yanga ibyo yemeraga mbere:
+
+```
+igipimo cya 1 cya 'f' gisaba ijambo, cyahawe umubare
+```
+
+Ibyangwa ni ibizwi gusa. Only DECLARED types are checked, and only when the
+argument's type is certain: a value whose type inference could not work out is
+still allowed through, because rejecting on a guess would reject working
+programs. An integer passed where `ibice` is declared is promoted, as
+everywhere else in the language.
+
+---
+
 ## 7. Amagambo — Strings
 
 Ijambo rya Wandaa ni aderesi y'ibice byaryo, rifite **uburebure bw'ibice 8
@@ -480,7 +558,7 @@ line the same way:
 Ibi biri muri [ROADMAP.md](../ROADMAP.md):
 
 - `for` loops
-- Generics
-- Ubwoko bwanditswe (explicit type annotations)
+- Generics (`urutonde<T>` ikora, ariko ntushobora kwandika umurimo
+  ufite igipimo cy'ubwoko cyawe)
 - Amagambo ya Unicode arenze ASCII mu `inyuguti()` / `igice()` (byombi
   bikorera ku bice, not on code points)

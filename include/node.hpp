@@ -31,6 +31,15 @@ struct Node {
   // Per-field byte width for RecordDecl, parallel to params. 0 means not
   // specified (defaults to 8 bytes), so old-style records still work.
   std::vector<int> widths;
+  // Declared types, parallel to params: parameters of a FuncDecl or Lambda,
+  // fields of a RecordDecl. An empty string means the type was not written
+  // down, so inference works it out exactly as it did before -- annotations
+  // are optional everywhere and every existing .waa file keeps compiling.
+  std::vector<std::string> paramTypes;
+  // Declared return type of a FuncDecl or Lambda, or the declared type of a
+  // VarDecl. Empty when not annotated. Held as text (e.g. "urutonde<ijambo>")
+  // because VType lives in codegen, not in the AST.
+  std::string retType;
   int line = 0;
 };
 
