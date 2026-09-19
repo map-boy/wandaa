@@ -1984,7 +1984,16 @@ struct Codegen {
 
     a.xor_eax_eax();
     a.defineLabel(epilogue);
-    if(fi.frameSize > 0) a.add_imm(X64Asm::RSP, fi.frameSize);
+    // Restore RSP from RBP rather than adding the frame size back.
+    //
+    // `add rsp, frameSize` only undoes the frame, and that is not enough: a
+    // postfix `?` jumps straight here from the middle of an expression, and
+    // when that expression was an argument to a call, emitCall's outgoing area
+    // is still reserved below the frame. Adding the frame size back then left
+    // RSP pointing into that area, so `pop rbp` read the wrong slot and the
+    // function returned to garbage. RBP has not moved since the prologue, so
+    // restoring from it is correct however much was pushed in between.
+    a.mov_reg(X64Asm::RSP, X64Asm::RBP);
     a.pop(X64Asm::RBP);
     a.ret();
   }

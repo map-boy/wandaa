@@ -49,6 +49,7 @@
 .globl wandaa_result_trap
 .globl wandaa_misuse_trap
 .globl wandaa_print_result
+.globl wandaa_free
 .globl wandaa_read_file
 .globl wandaa_write_file
 .globl wandaa_append_file
@@ -1116,6 +1117,44 @@ wandaa_pr_nl:
   call wandaa_print_str
 
 wandaa_pr_done:
+  pop r12
+  pop rbx
+  add rsp, 48
+  pop rbp
+  ret
+
+# ============================ wandaa_free(ptr) ==============================
+#  Free a heap block, given the VALUE pointer -- the one that points just past
+#  the 8-byte header, which is what every Wandaa heap value actually holds.
+#
+#  A null pointer is ignored. That is what lets the compiler emit an
+#  unconditional free for a slot that may not have been assigned yet: the
+#  prologue zeroes every slot it will later free, so "not yet assigned" and
+#  "nothing to free" are the same thing.
+#
+#  Two pushes, so NO `sub rsp, 8`: see the note in wandaa_bounds_trap.
+wandaa_free:
+  push rbp
+  mov rbp, rsp
+  sub rsp, 48
+  push rbx
+  push r12
+
+  cmp rcx, 0
+  je wandaa_free_done
+  lea rbx, [rcx-8]                  # back up to the allocation itself
+
+  sub rsp, 32
+  call qword ptr [rip+__imp_GetProcessHeap]
+  add rsp, 32
+  mov rcx, rax
+  xor rdx, rdx
+  mov r8, rbx
+  sub rsp, 32
+  call qword ptr [rip+__imp_HeapFree]
+  add rsp, 32
+
+wandaa_free_done:
   pop r12
   pop rbx
   add rsp, 48

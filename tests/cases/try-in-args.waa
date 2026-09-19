@@ -1,0 +1,36 @@
+# Regression: a postfix `?` jumps straight to the function epilogue from the
+# middle of an expression. When that expression is an ARGUMENT to a call, the
+# outgoing argument area emitCall reserved is still on the stack at that point.
+# The epilogue used to restore RSP with `add rsp, frameSize`, which undoes only
+# the frame, so `pop rbp` read the wrong slot and the function returned to
+# garbage. It now restores RSP from RBP, which is correct however much was
+# pushed in between.
+umurimo mk(n) {
+  niba (n < 0) { tanga byanze("munsi ya zeru"); }
+  tanga byakunze(n);
+}
+umurimo teranya(a, b) { tanga a + b; }
+
+umurimo koresha(a, b) {
+  tanga byakunze(teranya(mk(a)?, mk(b)?));
+}
+
+reka ok = koresha(2, 3);
+andika(agaciro(ok));
+
+# The second argument fails, so the propagation happens with the outgoing
+# area of BOTH teranya and byakunze still reserved.
+reka bad = koresha(2, 0 - 1);
+andika(byarakunze(bad));
+andika(ikosa(bad));
+
+# The first argument fails.
+reka bad2 = koresha(0 - 5, 3);
+andika(ikosa(bad2));
+
+# Deeper: a `?` inside an argument to a call inside an argument.
+umurimo imbitse(x) { tanga byakunze(teranya(teranya(mk(x)?, 1), 2)); }
+andika(agaciro(imbitse(10)));
+andika(ikosa(imbitse(0 - 1)));
+
+andika("bigeze hano");
