@@ -188,7 +188,10 @@ compiler contributor a Wandaa programmer.
 **What it requires** (all Phase 1 work, which is why it comes last):
 
 - Records — an AST is a tree of tagged nodes. **Done**
-- Growable arrays and a map type — symbol tables
+- Growable arrays — **Done**: `ongeraho(a, x)` appends and returns the array,
+  with capacity in a second header word and doubling growth
+- A map type — symbol tables. Still missing, and the main blocker left for
+  stage 2
 - String building that does not leak — the code generator produces a lot of it
 - File I/O — already present
 - Enough recursion depth for deeply nested expressions

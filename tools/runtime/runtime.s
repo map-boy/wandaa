@@ -50,6 +50,7 @@
 .globl wandaa_misuse_trap
 .globl wandaa_print_result
 .globl wandaa_free
+.globl wandaa_array_push
 .globl wandaa_read_file
 .globl wandaa_write_file
 .globl wandaa_append_file
@@ -83,6 +84,11 @@ wandaa_current_line:  .quad 0
 wandaa_intbuf:        .space 32, 0
 
 .p2align 3
+# A STATIC string: it lives in the image, not on the heap, so its capacity
+# word is the sentinel -1 and wandaa_free leaves it alone. soma() hands this
+# back when a file is missing, and the caller has no way to know it is not an
+# ordinary heap string.
+wandaa_empty_str_cap: .quad -1
 wandaa_empty_str_hdr: .quad 0
 wandaa_empty_str:     .byte 0
 
@@ -284,21 +290,22 @@ wandaa_str_concat:
   mov r14, rax
   mov rcx, r14
   xor rdx, rdx
-  lea r8, [rbx+9]                   # 8-byte header + bytes + NUL
+  lea r8, [rbx+17]                  # 16-byte header + bytes + NUL
   sub rsp, 32
   call qword ptr [rip+__imp_HeapAlloc]
   add rsp, 32
   mov r15, rax
-  mov [r15], rbx                    # length header
+  mov [r15], rbx                    # capacity
+  mov [r15+8], rbx                  # length
   mov rsi, r12
-  lea rdi, [r15+8]
+  lea rdi, [r15+16]
   mov rcx, [r12-8]
   rep movsb
   mov rsi, r13
   mov rcx, [r13-8]
   rep movsb
   mov byte ptr [rdi], 0
-  lea rax, [r15+8]
+  lea rax, [r15+16]
   add rsp, 8
   pop r15
   pop r14
@@ -407,12 +414,13 @@ wandaa_read_file:
   call qword ptr [rip+__imp_GetProcessHeap]
   mov rcx, rax
   xor rdx, rdx
-  lea r8, [r13+9]
+  lea r8, [r13+17]
   call qword ptr [rip+__imp_HeapAlloc]
-  mov [rax], r13
+  mov [rax], r13                    # capacity
+  mov [rax+8], r13                  # length
   mov r12, rax
   mov rcx, rbx
-  lea rdx, [r12+8]
+  lea rdx, [r12+16]
   mov r8, r13
   lea r9, [rip+wandaa_bytesWritten]
   mov qword ptr [rsp+32], 0
@@ -427,10 +435,10 @@ wandaa_read_file:
 wandaa_rf_readok:
   mov rcx, rbx
   call qword ptr [rip+__imp_CloseHandle]
-  lea rbx, [r12+8]
+  lea rbx, [r12+16]
   add rbx, r13
   mov byte ptr [rbx], 0
-  lea rax, [r12+8]
+  lea rax, [r12+16]
   jmp wandaa_rf_done
 wandaa_rf_fail:
   lea rax, [rip+wandaa_empty_str]
@@ -523,19 +531,20 @@ wandaa_sfc_have_len:
   add rsp, 32
   mov rcx, rax
   xor rdx, rdx
-  lea r8, [rbx+9]                   # header + bytes + NUL
+  lea r8, [rbx+17]                  # header + bytes + NUL
   sub rsp, 32
   call qword ptr [rip+__imp_HeapAlloc]
   add rsp, 32
 
   mov r13, rax
-  mov [r13], rbx                    # length header
+  mov [r13], rbx                    # capacity
+  mov [r13+8], rbx                  # length
   mov rsi, r12
-  lea rdi, [r13+8]
+  lea rdi, [r13+16]
   mov rcx, rbx
   rep movsb
   mov byte ptr [rdi], 0
-  lea rax, [r13+8]
+  lea rax, [r13+16]
   jmp wandaa_sfc_done
 
 wandaa_sfc_null:
@@ -611,19 +620,20 @@ wandaa_sub_l2:
   add rsp, 32
   mov rcx, rax
   xor rdx, rdx
-  lea r8, [rbx+9]
+  lea r8, [rbx+17]
   sub rsp, 32
   call qword ptr [rip+__imp_HeapAlloc]
   add rsp, 32
 
   mov r13, rax
-  mov [r13], rbx
+  mov [r13], rbx                    # capacity
+  mov [r13+8], rbx                  # length
   mov rsi, r12
-  lea rdi, [r13+8]
+  lea rdi, [r13+16]
   mov rcx, rbx
   rep movsb
   mov byte ptr [rdi], 0
-  lea rax, [r13+8]
+  lea rax, [r13+16]
 
   add rsp, 8
   pop r13
@@ -684,19 +694,20 @@ wandaa_its_nosign:
   add rsp, 32
   mov rcx, rax
   xor rdx, rdx
-  lea r8, [r13+9]
+  lea r8, [r13+17]
   sub rsp, 32
   call qword ptr [rip+__imp_HeapAlloc]
   add rsp, 32
 
   mov rbx, rax
-  mov [rbx], r13
+  mov [rbx], r13                    # capacity
+  mov [rbx+8], r13                  # length
   mov rsi, r12
-  lea rdi, [rbx+8]
+  lea rdi, [rbx+16]
   mov rcx, r13
   rep movsb
   mov byte ptr [rdi], 0
-  lea rax, [rbx+8]
+  lea rax, [rbx+16]
 
   add rsp, 8
   pop r13
@@ -771,14 +782,15 @@ wandaa_an_ok:
   mov rdx, 8                        # HEAP_ZERO_MEMORY
   mov r8, r12
   shl r8, 3
-  add r8, 8                         # header + n*8
+  add r8, 16                        # two header words + n*8
   sub rsp, 32
   call qword ptr [rip+__imp_HeapAlloc]
   add rsp, 32
 
   mov rbx, rax
-  mov [rbx], r12
-  lea rax, [rbx+8]
+  mov [rbx], r12                    # capacity
+  mov [rbx+8], r12                  # count
+  lea rax, [rbx+16]
 
   add rsp, 8
   pop r12
@@ -1123,6 +1135,99 @@ wandaa_pr_done:
   pop rbp
   ret
 
+# ===================== wandaa_array_push(a, x) ==============================
+#  Append x to array a and return the array to use from now on. That return is
+#  the whole interface: when the block has to grow it is a DIFFERENT pointer,
+#  so the caller must write `a = ongeraho(a, x);`.
+#
+#  Capacity lives in the word before the count:
+#      [ptr-16] = capacity, how many elements the block can hold
+#      [ptr-8]  = count,    how many are in use
+#  which is why every existing reader of [ptr-8] is untouched by any of this.
+#
+#  Growth doubles, so n appends copy O(n) elements in total rather than O(n^2).
+#
+#  The old block is deliberately NOT freed. Another variable may still be
+#  pointing at it and this routine cannot know; freeing it would turn a leak
+#  into a dangling pointer. At most one extra copy of the array is left behind.
+#
+#  Four pushes, so NO `sub rsp, 8`: see the note in wandaa_bounds_trap.
+wandaa_array_push:
+  push rbp
+  mov rbp, rsp
+  sub rsp, 64
+  push rbx
+  push r12
+  push r13
+  push r14
+
+  mov rbx, rcx                      # the array
+  mov r12, rdx                      # the value to append
+  mov r13, [rbx-8]                  # count
+  mov r14, [rbx-16]                 # capacity
+
+  # A static block (capacity -1) is a string literal or the empty string, not
+  # a growable array. Treat it as empty rather than copying `count` QWORDS out
+  # of something that holds bytes -- appending to a string is a mistake, but it
+  # must not read past the end of the image.
+  cmp r14, 0
+  jge wandaa_ap_have_cap
+  xor r14, r14
+  xor r13, r13
+wandaa_ap_have_cap:
+
+  cmp r13, r14
+  jl wandaa_ap_fits
+
+  # ---- grow: newcap = max(4, cap * 2) ----
+  mov rax, r14
+  shl rax, 1
+  cmp rax, 4
+  jge wandaa_ap_cap
+  mov rax, 4
+wandaa_ap_cap:
+  mov r14, rax
+
+  sub rsp, 32
+  call qword ptr [rip+__imp_GetProcessHeap]
+  add rsp, 32
+  mov rcx, rax
+  mov rdx, 8                        # HEAP_ZERO_MEMORY
+  mov r8, r14
+  shl r8, 3
+  add r8, 16                        # two header words + newcap*8
+  sub rsp, 32
+  call qword ptr [rip+__imp_HeapAlloc]
+  add rsp, 32
+
+  add rax, 16                       # the new value pointer
+  mov [rax-16], r14                 # capacity
+
+  xor rcx, rcx
+wandaa_ap_copy:
+  cmp rcx, r13
+  jge wandaa_ap_copied
+  mov rdx, [rbx+rcx*8]
+  mov [rax+rcx*8], rdx
+  inc rcx
+  jmp wandaa_ap_copy
+wandaa_ap_copied:
+  mov rbx, rax                      # rbx is the array again
+
+wandaa_ap_fits:
+  mov [rbx+r13*8], r12
+  inc r13
+  mov [rbx-8], r13                  # the new count
+  mov rax, rbx
+
+  pop r14
+  pop r13
+  pop r12
+  pop rbx
+  add rsp, 64
+  pop rbp
+  ret
+
 # ============================ wandaa_free(ptr) ==============================
 #  Free a heap block, given the VALUE pointer -- the one that points just past
 #  the 8-byte header, which is what every Wandaa heap value actually holds.
@@ -1142,7 +1247,9 @@ wandaa_free:
 
   cmp rcx, 0
   je wandaa_free_done
-  lea rbx, [rcx-8]                  # back up to the allocation itself
+  cmp qword ptr [rcx-16], -1        # a static block: never on the heap
+  je wandaa_free_done
+  lea rbx, [rcx-16]                 # back up over BOTH header words
 
   sub rsp, 32
   call qword ptr [rip+__imp_GetProcessHeap]

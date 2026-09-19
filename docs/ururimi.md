@@ -432,6 +432,36 @@ Urutonde rubikwa muri heap, rufite **umubare w'ibice 8 imbere** — arrays are
 heap allocated with an 8-byte element count before the data, the same shape as
 strings.
 
+### Kongeraho — growing an array
+
+`ongeraho(a, x)` yongeraho `x` **igasubiza** urutonde rwo gukoresha guhera
+ubu, kuko kwagura bishobora kurwimura:
+
+`ongeraho(a, x)` appends and **returns** the array to use from now on, because
+growing it may move it. Always write the assignment:
+
+```wandaa
+reka a = urutonde(0);
+reka i = 0;
+mugihe (i < 10) { a = ongeraho(a, i * i); i = i + 1; }
+andika(ubunini(a));            # 10
+```
+
+Ubunini bwiyongera kabiri buri gihe, bityo kongeraho n'inshuro bisaba akazi ka
+O(n) muri rusange, si O(n²). Capacity doubles, so n appends cost O(n) copying
+in total.
+
+`ubunini()` ni **umubare w'ibice bikoreshwa**, si ubushobozi bw'agace:
+`ubunini` is the COUNT in use, never the capacity, and bounds checks use that
+same count — a block that can hold four but holds one rejects `a[1]`.
+
+Umwanya wa kera ntusohorwa igihe urutonde rwaguwe: ikindi kigereranyo gishobora
+kuba kikirwerekeza. The old block is not freed when the array grows, because
+another variable may still point at it; at most one extra copy is left behind.
+Urutonde rwubatswe na `ongeraho` ntirusohorwa mu buryo bwikora (reba igice 11b).
+
+---
+
 Indexing **is** bounds-checked, ku gusoma no ku kwandika — on reads and on
 writes alike. Niba index isohotse mu rutonde, porogaramu ihagarara ivuga
 umurongo, index, n'ubunini:
@@ -532,6 +562,7 @@ Ibigomba kumenyekana — the limits, and they are real:
 | `mu_bice(n)` | integer → f64 |
 | `mu_mubare_wuzuye(x)` | f64 → integer, truncating toward zero |
 | `urutonde(n)` | new zero-filled array of n elements |
+| `ongeraho(a, x)` | append x, returning the array to keep — reba igice cya 8 |
 | `ijambo(p)` | raw NUL-terminated pointer → Wandaa string |
 | `soma(dosiye)` | read a whole file as a string |
 | `andikamo(dosiye, ibirimo)` | write a string to a file |

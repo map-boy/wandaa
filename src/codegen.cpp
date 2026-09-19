@@ -373,6 +373,7 @@ VType evalType(const NodePtr& n, const std::unordered_map<std::string,VType>& ty
         {"inyuguti",  VType::Int},
         {"mu_mubare", VType::Int},
         {"urutonde",  VType::Arr},
+        {"ongeraho",  VType::Arr},
         {"byakunze",  VType::Result},
         {"byanze",    VType::Result},
         {"byarakunze",VType::Int},     // 1 or 0
@@ -930,6 +931,34 @@ void checkSelfCapture(const NodePtr& n){
   for(auto& k : n->kids) checkSelfCapture(k);
 }
 
+// Calling a closure held in a variable BEFORE the `reka` that fills it runs
+// through an unset frame slot, which crashes with nothing but a line number.
+//
+// Locals are function-scoped here, so this also catches the case where a name
+// is used as a builtin earlier in the same function and declared as a variable
+// later: the declaration shadows the whole body, including the earlier use.
+// A lambda body is walked where it appears, because that is where its captures
+// are taken.
+void checkCallBeforeDecl(const NodePtr& n, const std::set<std::string>& locals,
+                         std::set<std::string>& seen, std::vector<std::string>& errs,
+                         int line = 0){
+  if(!n) return;
+  if(n->type==NT::FuncDecl) return;            // its own frame
+  // Only statements carry a line, so the enclosing one is what an expression
+  // gets reported against.
+  if(n->line > 0) line = n->line;
+  if(n->type==NT::VarDecl){
+    for(auto& k : n->kids) checkCallBeforeDecl(k, locals, seen, errs, line);
+    seen.insert(n->sval);                      // in scope only from here on
+    return;
+  }
+  if(n->type==NT::Call && locals.count(n->sval) && !seen.count(n->sval))
+    errs.push_back("umurimo '" + n->sval + "' uhamagawe ku murongo " +
+                   std::to_string(line) + " mbere y'uko 'reka " + n->sval +
+                   "' iyishyiraho");
+  for(auto& k : n->kids) checkCallBeforeDecl(k, locals, seen, errs, line);
+}
+
 void liftLambdas(const NodePtr& n, const std::set<std::string>& callables){
   if(!n) return;
   if(n->type==NT::Lambda){
@@ -1008,7 +1037,8 @@ struct Checker {
       {"uburebure",1},{"ubunini",1},{"soma",1},{"andikamo",2},{"ongeramo",2},
       {"ijambo",1},{"inyuguti",2},{"igice",3},{"mu_ijambo",1},{"mu_mubare",1},
       {"urutonde",1},{"mu_bice",1},{"mu_mubare_wuzuye",1},
-      {"byakunze",1},{"byanze",1},{"byarakunze",1},{"agaciro",1},{"ikosa",1}
+      {"byakunze",1},{"byanze",1},{"byarakunze",1},{"agaciro",1},{"ikosa",1},
+      {"ongeraho",2}
     };
     return m;
   }
@@ -1065,10 +1095,16 @@ struct Checker {
         auto fi = fnArity.find(name);
         auto ei = externArity.find(name);
         auto ri = g_recordTypes.find(name);
-        if(bi != builtinArity().end()){ want = bi->second; known = true; }
-        else if(fi != fnArity.end())  { want = fi->second; known = true; }
-        else if(ei != externArity.end()){ want = ei->second; known = true; }
+        // A name the programmer declared WINS over a builtin of the same name.
+        // Adding a builtin must never break a program that already used that
+        // word for its own function or variable (GOVERNANCE principle 5), so
+        // the user's declarations are consulted first and a variable holding a
+        // closure suppresses the check entirely.
+        if(fi != fnArity.end())           { want = fi->second; known = true; }
+        else if(ei != externArity.end())  { want = ei->second; known = true; }
         else if(ri != g_recordTypes.end()){ want = ri->second.fieldNames.size(); known = true; }
+        else if(types.count(name))        { known = false; }   // a closure in a variable
+        else if(bi != builtinArity().end()){ want = bi->second; known = true; }
 
         if(known && given != want)
           err(n, "umurimo '" + name + "' usaba ibipimo " + std::to_string(want) +
@@ -1366,10 +1402,11 @@ struct Codegen {
     callImport("GetProcessHeap");
     a.mov_reg(X64Asm::RCX, X64Asm::RAX);
     a.xorr(X64Asm::RDX, X64Asm::RDX);
-    a.mov_imm(X64Asm::R8, (int64_t)(8 + count*8));
+    a.mov_imm(X64Asm::R8, (int64_t)(16 + count*8));
     callImport("HeapAlloc");
     a.mov_reg(X64Asm::R12, X64Asm::RAX);
-    a.mov_store_imm_base(X64Asm::R12, 0, (int32_t)count);
+    a.mov_store_imm_base(X64Asm::R12, 0, (int32_t)count);   // capacity
+    a.mov_store_imm_base(X64Asm::R12, 8, (int32_t)count);   // count
     for(size_t i=0;i<count;++i){
       // R12 has to be saved across the element's own code, not just across the
       // calls in it. A CALL preserves R12 -- it is callee-saved -- but a
@@ -1381,9 +1418,9 @@ struct Codegen {
       popTmp(X64Asm::R12);
       // The old backend always emitted a disp8 here, which silently truncated
       // past 15 elements. mov_store_base picks disp8/disp32 correctly.
-      a.mov_store_base(X64Asm::R12, (int32_t)(8 + i*8), X64Asm::RAX);
+      a.mov_store_base(X64Asm::R12, (int32_t)(16 + i*8), X64Asm::RAX);
     }
-    a.lea_base(X64Asm::RAX, X64Asm::R12, 8);
+    a.lea_base(X64Asm::RAX, X64Asm::R12, 16);
   }
 
   // Build the closure block: the code pointer, then a copy of each captured
@@ -1396,17 +1433,18 @@ struct Codegen {
     callImport("GetProcessHeap");
     a.mov_reg(X64Asm::RCX, X64Asm::RAX);
     a.xorr(X64Asm::RDX, X64Asm::RDX);
-    a.mov_imm(X64Asm::R8, (int64_t)(8 + count*8));
+    a.mov_imm(X64Asm::R8, (int64_t)(16 + count*8));
     callImport("HeapAlloc");
     a.mov_reg(X64Asm::R12, X64Asm::RAX);
-    a.mov_store_imm_base(X64Asm::R12, 0, (int32_t)count);
+    a.mov_store_imm_base(X64Asm::R12, 0, (int32_t)count);   // capacity
+    a.mov_store_imm_base(X64Asm::R12, 8, (int32_t)count);   // count
     a.lea_rip(X64Asm::RAX, n->sval);                    // the lifted function
-    a.mov_store_base(X64Asm::R12, 8, X64Asm::RAX);
+    a.mov_store_base(X64Asm::R12, 16, X64Asm::RAX);
     for(size_t i=0;i<caps.size();++i){
       a.mov_load_rbp(X64Asm::RAX, -curOffset(caps[i]));
-      a.mov_store_base(X64Asm::R12, (int32_t)(16 + 8*i), X64Asm::RAX);
+      a.mov_store_base(X64Asm::R12, (int32_t)(24 + 8*i), X64Asm::RAX);
     }
-    a.lea_base(X64Asm::RAX, X64Asm::R12, 8);
+    a.lea_base(X64Asm::RAX, X64Asm::R12, 16);
   }
 
   // ---- results -----------------------------------------------------------
@@ -1429,16 +1467,17 @@ struct Codegen {
     callImport("GetProcessHeap");
     a.mov_reg(X64Asm::RCX, X64Asm::RAX);
     a.xorr(X64Asm::RDX, X64Asm::RDX);
-    a.mov_imm(X64Asm::R8, (int64_t)(8 + 2*8));
+    a.mov_imm(X64Asm::R8, (int64_t)(16 + 2*8));
     callImport("HeapAlloc");
     a.mov_reg(X64Asm::R12, X64Asm::RAX);
-    a.mov_store_imm_base(X64Asm::R12, 0, 2);            // count header
-    a.mov_store_imm_base(X64Asm::R12, 8, tag);          // slot 0: the tag
+    a.mov_store_imm_base(X64Asm::R12, 0, 2);            // capacity
+    a.mov_store_imm_base(X64Asm::R12, 8, 2);            // count
+    a.mov_store_imm_base(X64Asm::R12, 16, tag);         // slot 0: the tag
     pushTmp(X64Asm::R12);                               // see genArrayLit
     genExpr(n->kids[0]);
     popTmp(X64Asm::R12);
-    a.mov_store_base(X64Asm::R12, 16, X64Asm::RAX);     // slot 1: the payload
-    a.lea_base(X64Asm::RAX, X64Asm::R12, 8);
+    a.mov_store_base(X64Asm::R12, 24, X64Asm::RAX);     // slot 1: the payload
+    a.lea_base(X64Asm::RAX, X64Asm::R12, 16);
   }
 
   // agaciro(r) -- the value inside. On a failure there is nothing to hand
@@ -1573,19 +1612,27 @@ struct Codegen {
     // garbage to a Win32 call that reads the whole struct (sockaddr_in's
     // sin_zero is the obvious case).
     a.mov_imm(X64Asm::RDX, 8);
-    a.mov_imm(X64Asm::R8, (int64_t)(8 + info.totalSize));
+    a.mov_imm(X64Asm::R8, (int64_t)(16 + info.totalSize));
     callImport("HeapAlloc");
     a.mov_reg(X64Asm::R12, X64Asm::RAX);
+    // Both header words are 0: a record has no element count, and a capacity
+    // of 0 is simply "not growable" -- it must not be the -1 that marks a
+    // static block, or the record could never be freed.
     a.mov_store_imm_base(X64Asm::R12, 0, 0);
+    a.mov_store_imm_base(X64Asm::R12, 8, 0);
     for(size_t i=0;i<n->kids.size() && i<count;++i){
       const std::string& f = info.fieldNames[i];
       const VType want = info.fieldType[f];
       const VType have = inferType(n->kids[i]);
+      // Same reason as genArrayLit: a nested literal is codegen, not a call,
+      // and would overwrite the block pointer R12 is holding.
+      pushTmp(X64Asm::R12);
       genExpr(n->kids[i]);
+      popTmp(X64Asm::R12);
       coerceRax(have, want);
-      storeFieldRax(X64Asm::R12, (int32_t)(8 + info.fieldOffset[f]), info.fieldWidth[f]);
+      storeFieldRax(X64Asm::R12, (int32_t)(16 + info.fieldOffset[f]), info.fieldWidth[f]);
     }
-    a.lea_base(X64Asm::RAX, X64Asm::R12, 8);
+    a.lea_base(X64Asm::RAX, X64Asm::R12, 16);
   }
 
   void genFieldAccess(const NodePtr& n){
@@ -1835,7 +1882,8 @@ struct Codegen {
       {"igice",     "wandaa_substr"},      // substring(start, len), clamped
       {"mu_ijambo", "wandaa_int_to_str"},  // number -> string
       {"mu_mubare", "wandaa_str_to_int"},  // string -> number
-      {"urutonde",  "wandaa_array_new"}    // zero-filled array of n elements
+      {"urutonde",  "wandaa_array_new"},   // zero-filled array of n elements
+      {"ongeraho",  "wandaa_array_push"}   // append, returning the array to keep
     };
     // A name that is a variable in this frame rather than a declared function
     // is a closure. The closure block travels as a hidden first argument, so
@@ -1876,7 +1924,9 @@ struct Codegen {
     }
 
     std::string target = n->sval;
-    auto bit = builtins.find(target);
+    // Same shadowing rule as the checker: a declared function of this name is
+    // the one being called, not the builtin that happens to share it.
+    auto bit = g_declaredFns.count(n->sval) ? builtins.end() : builtins.find(target);
     if(bit != builtins.end()) target = bit->second;
 
     // The two f64 conversions are single instructions, so they are emitted
@@ -2196,21 +2246,30 @@ struct Codegen {
   }
 
   // ---- data area ---------------------------------------------------------
-  // One entry per string literal, laid out exactly as the old .data block:
+  // One entry per string literal:
   //
   //     .align 8
+  //     str_N_cap: .quad -1          <- static marker, see below
   //     str_N_hdr: .quad <length>
   //     str_N:     .ascii "..."
   //                .byte 0
   //
   // so wandaa_str_len's `mov rax, [rcx-8]` finds the length where it expects.
+  //
+  // The capacity word ahead of it is -1 rather than the length. A literal
+  // lives in the image, not on the heap, and that sentinel is what stops
+  // wandaa_free from ever handing one to HeapFree -- which matters because a
+  // literal is indistinguishable from a heap string once it is in a variable.
   std::vector<uint8_t> buildDataArea(size_t dataBase){
     std::vector<uint8_t> data;
+    auto word = [&](uint64_t v){
+      for(int b=0;b<8;++b) data.push_back((uint8_t)((v >> (8*b)) & 0xFF));
+    };
     for(size_t i=0;i<strings.size();++i){
       while((dataBase + data.size()) % 8 != 0) data.push_back(0);
       const std::string& s = strings[i];
-      const uint64_t len = s.size();
-      for(int b=0;b<8;++b) data.push_back((uint8_t)((len >> (8*b)) & 0xFF));
+      word((uint64_t)-1);                 // capacity: static, never freed
+      word((uint64_t)s.size());           // length
       a.defineAbsLabel("str_" + std::to_string(i), dataBase + data.size());
       data.insert(data.end(), s.begin(), s.end());
       data.push_back(0);
@@ -2265,6 +2324,20 @@ struct Codegen {
     for(auto& kv : externs) callables.insert(kv.first);
     for(const auto& b : Checker::builtinArity()) callables.insert(b.first);
     callables.insert("andika");
+    // A name the program declares as a VARIABLE stops being a builtin call.
+    // Without this, `reka ongeraho = umurimo(x){ ... };` kept calling the
+    // builtin of that name -- a program that worked before the builtin existed
+    // would break, which GOVERNANCE principle 5 forbids. Declared functions,
+    // externs and record constructors still win over a variable, as they did.
+    {
+      std::vector<std::string> declared;
+      collectNames(program, declared);
+      for(auto& k : program->kids)
+        if(k->type==NT::FuncDecl) collectNames(k->kids[0], declared);
+      for(const auto& d : declared)
+        if(!g_declaredFns.count(d) && !externs.count(d) && !g_recordTypes.count(d))
+          callables.erase(d);
+    }
     for(auto& f : funcs) g_declaredFns.insert(f->sval);
     g_varLambda.clear();
     g_fnLambda.clear();
@@ -2307,6 +2380,22 @@ struct Codegen {
     for(auto& f : funcs) noteFnLambda(f->kids[0], f->sval);
     noteLambdaVars(program);
     checkSelfCapture(program);
+
+    // Per body: every local of that body, then a walk in source order.
+    {
+      std::vector<std::string> errs;
+      auto checkBody = [&](const NodePtr& body){
+        std::vector<std::string> ls;
+        collectNames(body, ls);
+        std::set<std::string> locals(ls.begin(), ls.end()), seen;
+        checkCallBeforeDecl(body, locals, seen, errs);
+      };
+      for(auto& f : funcs) checkBody(f->kids[0]);
+      auto topBlock = mk(NT::Block);
+      topBlock->kids = rest;
+      checkBody(topBlock);
+      if(!errs.empty()) throw std::runtime_error(errs.front());
+    }
 
     auto restBlock = mk(NT::Block);
     restBlock->kids = rest;

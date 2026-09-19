@@ -1,0 +1,48 @@
+# Urutonde rwiyongera -- a growable array. `ongeraho(a, x)` appends x and
+# RETURNS the array to use from now on, because growing it may move it:
+#
+#     a = ongeraho(a, x);
+#
+# Capacity lives in the word before the count, so `ubunini` still reports how
+# many elements are in use and bounds checks still use that, not the capacity.
+
+reka a = urutonde(0);
+reka i = 0;
+mugihe (i < 10) { a = ongeraho(a, i * i); i = i + 1; }
+andika(ubunini(a));
+andika(a[0]);
+andika(a[9]);
+
+# Appending to an array literal works the same way.
+reka b = [1, 2];
+b = ongeraho(b, 3);
+b = ongeraho(b, 4);
+andika(ubunini(b));
+andika(b[0] + b[1] + b[2] + b[3]);
+
+# ubunini is the COUNT, never the capacity: one element in a block that can
+# hold four still reports one.
+reka c = urutonde(0);
+c = ongeraho(c, 42);
+andika(ubunini(c));
+andika(c[0]);
+
+# Elements keep their type.
+reka d: urutonde<ijambo> = urutonde(0);
+reka j = 0;
+mugihe (j < 5) { d = ongeraho(d, "n" + mu_ijambo(j)); j = j + 1; }
+andika(ubunini(d));
+andika(d[0] + d[4]);
+
+# Growth doubles, so this is linear work rather than quadratic.
+reka big = urutonde(0);
+reka k = 0;
+mugihe (k < 20000) { big = ongeraho(big, k); k = k + 1; }
+andika(ubunini(big));
+andika(big[19999]);
+
+# Shadowing is covered by tests/cases/closures.waa, which uses `ongeraho` as
+# an ordinary variable name -- that file predates the builtin and still has to
+# compile. It cannot be exercised here as well: locals are function-scoped, so
+# declaring the name in this file would shadow the builtin for the whole file,
+# including the calls above.
