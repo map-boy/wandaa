@@ -1,0 +1,169 @@
+# ===========================================================================
+#  compiler/codegen.waa -- the Wandaa code generator, written in Wandaa.
+#
+#  Stage 2c-iii of the bootstrap in ROADMAP.md, and a transliteration of the
+#  integer-and-string core of src/codegen.cpp. It walks the AST from
+#  compiler/isesengura.waa, emits instructions with compiler/x64.waa, and
+#  builds the executable with compiler/pe.waa.
+#
+#      waa compiler/codegen.waa <dosiye.waa> <out.exe>
+#
+#  It compiles a SUBSET, and says so rather than pretending otherwise:
+#  integers, strings, arithmetic, comparisons, `reka`, assignment, `niba`,
+#  `mugihe`, `hagarika`, `komeza`, functions with parameters, `tanga` and
+#  `andika`. Everything else is refused by name. compiler/verify_codegen.sh
+#  requires the executables it produces to be byte-identical to wandaac's for
+#  a corpus of programs inside that subset.
+# ===========================================================================
+
+injiza "isesengura.waa";
+injiza "x64.waa";
+injiza "pe.waa";
+injiza "blob.waa";
+
+# Argument registers, in Win64 order: RCX, RDX, R8, R9.
+umurimo arg_reg(i: umubare): umubare {
+  niba (i == 0) { tanga 1; }
+  niba (i == 1) { tanga 2; }
+  niba (i == 2) { tanga 8; }
+  tanga 9;
+}
+
+# Per-function frame: parameter and local slots, and the types we could work
+# out. Laid out exactly as buildFnInfo does, or the frames would not match.
+ubwoko Fn {
+  izina: urutonde,            # name -> byte offset (an inkoranya)
+  ubwoko_bwa: urutonde,       # name -> 1 when the value is a string
+  frameSize: umubare,
+  epilogue: ijambo
+}
+
+ubwoko Gen {
+  k: Kode,
+  p: PE,
+  fn: Fn,
+  stackSlots: umubare,        # 8-byte temporaries currently below the frame
+  labelCounter: umubare,
+  amagambo: urutonde,         # string literals, in order
+  loop_end: urutonde,         # enclosing loop labels, for hagarika/komeza
+  loop_top: urutonde,
+  fn_str: urutonde,           # function name -> 1 when it returns a string
+  ikosa: ijambo
+}
+
+umurimo gen_nshya(): Gen {
+  tanga Gen(kode_nshya(), pe_nshya(),
+            Fn(inkoranya(), inkoranya(), 0, ""),
+            0, 0, urutonde(0), urutonde(0), urutonde(0), inkoranya(), "");
+}
+
+umurimo izina_rishya(g: Gen, mbere: ijambo): ijambo {
+  g.labelCounter = g.labelCounter + 1;
+  tanga mbere + mu_ijambo(g.labelCounter);
+}
+
+umurimo reka_ikosa(g: Gen, ubutumwa: ijambo) {
+  niba (uburebure(g.ikosa) == 0) { g.ikosa = ubutumwa; }
+}
+
+# stackSlots counts the 8-byte temporaries pushed below the frame, so a call
+# can work out whether it needs 8 bytes of padding to keep RSP 16-byte
+# aligned. Getting this wrong crashes inside Windows, not in the program.
+umurimo push_tmp(g: Gen, r: umubare) { push(g.k, r); g.stackSlots = g.stackSlots + 1; }
+umurimo pop_tmp(g: Gen, r: umubare)  { pop(g.k, r);  g.stackSlots = g.stackSlots - 1; }
+umurimo call_pad(g: Gen): umubare {
+  niba (biti_na(g.stackSlots, 1)) { tanga 8; }
+  tanga 0;
+}
+
+umurimo call_runtime(g: Gen, izina: ijambo) {
+  reka pad = call_pad(g);
+  sub_imm(g.k, 4, 32 + pad);
+  call_label(g.k, izina);
+  add_imm(g.k, 4, 32 + pad);
+}
+
+umurimo ni_ijambo(g: Gen, izina: ijambo): umubare {
+  niba (arimo(g.fn.ubwoko_bwa, izina)) { tanga fata(g.fn.ubwoko_bwa, izina); }
+  tanga 0;
+}
+
+# ---- ubwoko -- the little type inference this subset needs ----------------
+#  Only Int and Str, and only where it is certain. It has to agree with the
+#  C++ inference on every program in the corpus or the bytes differ.
+umurimo ubwoko_bw_imvugo(g: Gen, n: Igice): umubare {
+  reka t = n.ubwoko_bwacyo;
+  niba (t == "Str") { tanga 1; }
+  niba (t == "Var") { tanga ni_ijambo(g, n.sval); }
+  niba (t == "Call") {
+    niba (arimo(g.fn_str, n.sval)) { tanga fata(g.fn_str, n.sval); }
+    tanga 0;
+  }
+  niba (t == "Bin") {
+    niba (n.sval == "&&" cyangwa n.sval == "||") { tanga 0; }
+    niba (n.sval == "<" cyangwa n.sval == ">" cyangwa n.sval == "<=" cyangwa
+          n.sval == ">=" cyangwa n.sval == "==" cyangwa n.sval == "!=") { tanga 0; }
+    reka ab: urutonde<Igice> = n.abana;
+    niba (n.sval == "+" na ubwoko_bw_imvugo(g, ab[0]) na ubwoko_bw_imvugo(g, ab[1])) {
+      tanga 1;
+    }
+    tanga 0;
+  }
+  niba (t == "Assign") {
+    reka ab: urutonde<Igice> = n.abana;
+    tanga ubwoko_bw_imvugo(g, ab[0]);
+  }
+  tanga 0;
+}
+
+# ---- amagambo -- string literals ------------------------------------------
+umurimo ongeraho_ijambo(g: Gen, v: ijambo): ijambo {
+  reka lbl = "str_" + mu_ijambo(ubunini(g.amagambo));
+  g.amagambo = ongeraho(g.amagambo, v);
+  tanga lbl;
+}
+
+# ---- gutegura -- frame layout ---------------------------------------------
+#  Exactly buildFnInfo: parameters first, then every `reka` in the body, each
+#  8 bytes, then the whole thing rounded up to 16.
+umurimo tora_amazina(n: Igice, out: urutonde): urutonde {
+  niba (n.ubwoko_bwacyo == "VarDecl") { out = ongeraho(out, n.sval); }
+  niba (n.ubwoko_bwacyo == "FuncDecl") { tanga out; }
+  niba (n.ubwoko_bwacyo == "Lambda") { tanga out; }
+  reka ab: urutonde<Igice> = n.abana;
+  reka i = 0;
+  mugihe (i < ubunini(ab)) { out = tora_amazina(ab[i], out); i = i + 1; }
+  tanga out;
+}
+
+umurimo tegura_fn(g: Gen, params: urutonde, body: Igice): Fn {
+  reka f: Fn = Fn(inkoranya(), inkoranya(), 0, "");
+  reka off = 8;
+  reka ps: urutonde<ijambo> = params;
+  reka i = 0;
+  mugihe (i < ubunini(ps)) {
+    f.izina = shyiramo(f.izina, ps[i], off);
+    off = off + 8;
+    i = i + 1;
+  }
+  reka locals: urutonde<ijambo> = tora_amazina(body, urutonde(0));
+  i = 0;
+  mugihe (i < ubunini(locals)) {
+    niba (arimo(f.izina, locals[i]) == 0) {
+      f.izina = shyiramo(f.izina, locals[i], off);
+      off = off + 8;
+    }
+    i = i + 1;
+  }
+  reka size = off - 8;
+  f.frameSize = biti_na(size + 15, 0 - 16);
+  tanga f;
+}
+
+umurimo aho_ry_ikigereranyo(g: Gen, izina: ijambo): umubare {
+  niba (arimo(g.fn.izina, izina) == 0) {
+    reka_ikosa(g, "ikigereranyo kitazwi: " + izina);
+    tanga 8;
+  }
+  tanga fata(g.fn.izina, izina);
+}

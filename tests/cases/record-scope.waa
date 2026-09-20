@@ -1,0 +1,35 @@
+# A record variable's type is tracked PER FUNCTION, not across the whole
+# program. Two functions -- or two modules brought in with `injiza` -- may use
+# the same variable name for different records, which is the normal thing to
+# do and was previously a compile error.
+ubwoko Ikimenyetso { ubwoko_bwacyo: ijambo, inyandiko: ijambo }
+ubwoko Igice { izina: ijambo, urwego: umubare }
+
+umurimo kora_ikimenyetso(): Ikimenyetso { tanga Ikimenyetso("IDENT", "izina"); }
+umurimo kora_igice(): Igice { tanga Igice("Var", 3); }
+
+# `t` is an Ikimenyetso here...
+umurimo soma_ikimenyetso(): ijambo {
+  reka t: Ikimenyetso = kora_ikimenyetso();
+  tanga t.ubwoko_bwacyo + " " + t.inyandiko;
+}
+
+# ...and an Igice here. Different fields, different offsets, same name.
+umurimo soma_igice(): ijambo {
+  reka t: Igice = kora_igice();
+  tanga t.izina + " " + mu_ijambo(t.urwego);
+}
+
+andika(soma_ikimenyetso());
+andika(soma_igice());
+
+# And a third meaning at the top level, which is its own scope.
+reka t: Ikimenyetso = kora_ikimenyetso();
+andika(t.inyandiko);
+
+# A parameter counts too.
+umurimo erekana(t: Igice): ijambo { tanga t.izina; }
+andika(erekana(kora_igice()));
+
+# Reusing one name for two records in the SAME scope is still refused, since
+# there the two really would collide.

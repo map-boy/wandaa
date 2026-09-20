@@ -13,9 +13,65 @@
 #  Declarations only -- `injiza` runs a module's top-level statements.
 # ===========================================================================
 
-ubwoko Kode { bayiti: urutonde }
+ubwoko Kode {
+  bayiti: urutonde,
+  base: umubare,              # where this buffer will sit in the section
+  amazina: urutonde,          # label name -> offset (an inkoranya)
+  fix_aho: urutonde,          # per fixup: the offset of its disp32 field
+  fix_izina: urutonde,        # per fixup: the label it refers to
+  fix_umurizo: urutonde       # per fixup: bytes that FOLLOW the field
+}
 
-umurimo kode_nshya(): Kode { tanga Kode(urutonde(0)); }
+umurimo kode_nshya(): Kode {
+  tanga Kode(urutonde(0), 0, inkoranya(), urutonde(0), urutonde(0), urutonde(0));
+}
+
+umurimo kode_base(k: Kode, b: umubare) { k.base = b; }
+
+# A label defined in this buffer.
+umurimo shyiraho_izina(k: Kode, izina: ijambo) {
+  k.amazina = shyiramo(k.amazina, izina, k.base + ubunini(k.bayiti));
+}
+
+# A label whose offset is already known and lies OUTSIDE this buffer: a
+# runtime blob entry point, an IAT slot, a string literal in the data area.
+umurimo shyiraho_izina_hanze(k: Kode, izina: ijambo, aho: umubare) {
+  k.amazina = shyiramo(k.amazina, izina, aho);
+}
+
+# Record a disp32 that has to be patched once every label is known. `umurizo`
+# is how many bytes follow the field within the instruction: 0 for most forms,
+# 4 for `mov qword ptr [rip+X], imm32`, where the immediate comes after. Getting
+# that wrong is the classic RIP-relative-with-immediate bug.
+umurimo shyiraho_fixup(k: Kode, izina: ijambo, umurizo: umubare) {
+  k.fix_aho = ongeraho(k.fix_aho, ubunini(k.bayiti));
+  k.fix_izina = ongeraho(k.fix_izina, izina);
+  k.fix_umurizo = ongeraho(k.fix_umurizo, umurizo);
+}
+
+umurimo kuri_32(k: Kode, off: umubare, v: umubare) {
+  reka i = 0;
+  mugihe (i < 4) {
+    k.bayiti[off + i] = biti_na(biti_iburyo(v, i * 8), 255);
+    i = i + 1;
+  }
+}
+
+# A RIP-relative displacement is measured from the END of the instruction.
+umurimo kemura_fixups(k: Kode): ijambo {
+  reka izina_rya: urutonde<ijambo> = k.fix_izina;
+  reka i = 0;
+  mugihe (i < ubunini(k.fix_aho)) {
+    niba (arimo(k.amazina, izina_rya[i]) == 0) {
+      tanga "umurimo utazwi: " + izina_rya[i];
+    }
+    reka aho_ryo = fata(k.amazina, izina_rya[i]);
+    reka site = k.base + k.fix_aho[i];
+    kuri_32(k, k.fix_aho[i], aho_ryo - (site + 4 + k.fix_umurizo[i]));
+    i = i + 1;
+  }
+  tanga "";
+}
 
 umurimo emit(k: Kode, b: umubare) {
   k.bayiti = ongeraho(k.bayiti, biti_na(b, 255));
@@ -227,6 +283,51 @@ umurimo mov_load_rbp(k: Kode, dst: umubare, disp: umubare)  { rbp_mem(k, 139, ds
 
 # setcc al. Signed conditions are for integer cmp; UCOMISD sets CF/ZF rather
 # than SF/OF, so float comparisons need the UNSIGNED forms.
+umurimo rel32(k: Kode, izina: ijambo) {
+  shyiraho_fixup(k, izina, 0);
+  emit32(k, 0);
+}
+
+umurimo jmp(k: Kode, izina: ijambo)  { emit(k, 233); rel32(k, izina); }
+umurimo jz(k: Kode, izina: ijambo)   { emit(k, 15); emit(k, 132); rel32(k, izina); }
+umurimo jnz(k: Kode, izina: ijambo)  { emit(k, 15); emit(k, 133); rel32(k, izina); }
+# jp -- "parity", which after UCOMISD means UNORDERED, i.e. an operand was NaN.
+umurimo jp(k: Kode, izina: ijambo)   { emit(k, 15); emit(k, 138); rel32(k, izina); }
+# jb -- UNSIGNED below, which is what makes one branch catch both ends of a
+# bounds check.
+umurimo jb(k: Kode, izina: ijambo)   { emit(k, 15); emit(k, 130); rel32(k, izina); }
+umurimo call_label(k: Kode, izina: ijambo) { emit(k, 232); rel32(k, izina); }
+
+# lea dst, [rip + label]
+umurimo lea_rip(k: Kode, dst: umubare, izina: ijambo) {
+  rex(k, 1, hejuru(dst), 0, 0, 0);
+  emit(k, 141); emit(k, modrm(0, dst, 5));
+  rel32(k, izina);
+}
+
+# mov dst, [rip + label]
+umurimo mov_load_rip(k: Kode, dst: umubare, izina: ijambo) {
+  rex(k, 1, hejuru(dst), 0, 0, 0);
+  emit(k, 139); emit(k, modrm(0, dst, 5));
+  rel32(k, izina);
+}
+
+# call qword ptr [rip + label] -- an imported function, through the IAT.
+umurimo call_mem_rip(k: Kode, izina: ijambo) {
+  emit(k, 255); emit(k, modrm(0, 2, 5));
+  rel32(k, izina);
+}
+
+# mov qword ptr [rip + label], imm32. The immediate FOLLOWS the displacement,
+# so the fixup carries a tail of 4.
+umurimo mov_store_imm_rip(k: Kode, izina: ijambo, imm: umubare) {
+  rex(k, 1, 0, 0, 0, 0);
+  emit(k, 199); emit(k, modrm(0, 0, 5));
+  shyiraho_fixup(k, izina, 4);
+  emit32(k, 0);
+  emit32(k, imm);
+}
+
 umurimo setcc(k: Kode, cc: ijambo) {
   reka op = 0;
   niba (cc == "l") { op = 156; }

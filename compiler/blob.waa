@@ -1,0 +1,100 @@
+# ===========================================================================
+#  compiler/blob.waa -- read the extracted runtime blob.
+#
+#  include/runtime_blob.txt is written by tools/extract_blob.cpp alongside the
+#  C++ header, from the SAME extraction, so the two compilers cannot drift:
+#
+#      blob   <hex of the whole .text>
+#      import <site> <dll> <func> <addend>
+#      code   <site> <symbol> <addend>
+#      label  <name> <offset>
+#
+#  Declarations only -- `injiza` runs a module's top-level statements.
+# ===========================================================================
+
+ubwoko Blob {
+  bayiti: urutonde,           # the runtime's .text, code and data together
+  imp_site: urutonde,
+  imp_dll: urutonde,
+  imp_func: urutonde,
+  imp_addend: urutonde,
+  code_site: urutonde,
+  code_sym: urutonde,
+  code_addend: urutonde,
+  label_izina: urutonde,      # names, in file order
+  label_aho: urutonde         # name -> offset (an inkoranya)
+}
+
+umurimo hex_digit(v: umubare): umubare {
+  niba (v >= 48 na v <= 57) { tanga v - 48; }
+  niba (v >= 97 na v <= 102) { tanga v - 97 + 10; }
+  niba (v >= 65 na v <= 70) { tanga v - 65 + 10; }
+  tanga 0;
+}
+
+ubwoko Curs { s: ijambo, i: umubare, n: umubare }
+
+umurimo c_field(c: Curs): ijambo {
+  mugihe (c.i < c.n) {
+    reka d = inyuguti(c.s, c.i);
+    niba (d == 32 cyangwa d == 9 cyangwa d == 13) { c.i = c.i + 1; }
+    ubundi { hagarika; }
+  }
+  niba (c.i >= c.n) { tanga ""; }
+  niba (inyuguti(c.s, c.i) == 10) { tanga ""; }
+  reka aho = c.i;
+  mugihe (c.i < c.n) {
+    reka d = inyuguti(c.s, c.i);
+    niba (d == 32 cyangwa d == 10 cyangwa d == 13 cyangwa d == 9) { hagarika; }
+    c.i = c.i + 1;
+  }
+  tanga igice(c.s, aho, c.i - aho);
+}
+
+umurimo c_eol(c: Curs) {
+  mugihe (c.i < c.n na inyuguti(c.s, c.i) != 10) { c.i = c.i + 1; }
+  niba (c.i < c.n) { c.i = c.i + 1; }
+}
+
+umurimo soma_blob(inzira: ijambo): Blob {
+  reka b: Blob = Blob(urutonde(0), urutonde(0), urutonde(0), urutonde(0), urutonde(0),
+                      urutonde(0), urutonde(0), urutonde(0), urutonde(0), inkoranya());
+  reka txt: ijambo = soma(inzira);
+  niba (uburebure(txt) == 0) { tanga b; }
+
+  reka c: Curs = Curs(txt, 0, uburebure(txt));
+  mugihe (c.i < c.n) {
+    reka op: ijambo = c_field(c);
+    niba (uburebure(op) == 0) { c_eol(c); komeza; }
+    niba (inyuguti(op, 0) == 35) { c_eol(c); komeza; }        # '#'
+
+    niba (op == "blob") {
+      reka hx: ijambo = c_field(c);
+      reka bytes = urutonde(uburebure(hx) / 2);
+      reka j = 0;
+      mugihe (j * 2 + 1 < uburebure(hx)) {
+        bytes[j] = hex_digit(inyuguti(hx, j * 2)) * 16 + hex_digit(inyuguti(hx, j * 2 + 1));
+        j = j + 1;
+      }
+      b.bayiti = bytes;
+    }
+    ubundi niba (op == "import") {
+      b.imp_site = ongeraho(b.imp_site, mu_mubare(c_field(c)));
+      b.imp_dll = ongeraho(b.imp_dll, c_field(c));
+      b.imp_func = ongeraho(b.imp_func, c_field(c));
+      b.imp_addend = ongeraho(b.imp_addend, mu_mubare(c_field(c)));
+    }
+    ubundi niba (op == "code") {
+      b.code_site = ongeraho(b.code_site, mu_mubare(c_field(c)));
+      b.code_sym = ongeraho(b.code_sym, c_field(c));
+      b.code_addend = ongeraho(b.code_addend, mu_mubare(c_field(c)));
+    }
+    ubundi niba (op == "label") {
+      reka izina: ijambo = c_field(c);
+      b.label_izina = ongeraho(b.label_izina, izina);
+      b.label_aho = shyiramo(b.label_aho, izina, mu_mubare(c_field(c)));
+    }
+    c_eol(c);
+  }
+  tanga b;
+}

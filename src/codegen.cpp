@@ -143,25 +143,49 @@ std::unordered_map<std::string, std::string> g_arrElemRecord;
 // resolve field offsets against whichever was recorded last -- and if both
 // records happen to have a field of that name, it reads the wrong bytes with
 // no error at all. So a conflict is refused outright.
+// Which function's scope record types are being recorded in or read from.
+// Empty means the top level. Without this the map is keyed by bare variable
+// name across the WHOLE program, so two functions -- or, worse, two modules --
+// using the same name for different records collide. That made records
+// unusable across `injiza` boundaries, which is exactly where a compiler
+// written in Wandaa puts them.
+std::string g_recordScope;
+
+struct RecordScope {
+  std::string saved;
+  explicit RecordScope(const std::string& fn) : saved(g_recordScope) { g_recordScope = fn; }
+  ~RecordScope() { g_recordScope = saved; }
+};
+
+std::string scopedVar(const std::string& name){ return g_recordScope + "::" + name; }
+
 void noteVarRecord(const std::string& name, const std::string& rec, int line){
-  auto it = g_varRecordType.find(name);
+  const std::string key = scopedVar(name);
+  auto it = g_varRecordType.find(key);
   if(it != g_varRecordType.end() && it->second != rec)
     throw std::runtime_error(
-      "ikigereranyo '" + name + "' cyahawe ubwoko bubiri butandukanye: '" +
-      it->second + "' na '" + rec + "' (ku murongo " + std::to_string(line) +
-      "). Ubwoko bw'ikigereranyo bukurikiranwa ku izina muri porogaramu yose, "
-      "bityo hindura rimwe muri ayo mazina.");
-  g_varRecordType[name] = rec;
+      "ikigereranyo '" + name + "' cyahawe ubwoko bubiri butandukanye muri '" +
+      (g_recordScope.empty() ? std::string("<hejuru>") : g_recordScope) + "': '" +
+      it->second + "' na '" + rec + "' (ku murongo " + std::to_string(line) + ")");
+  g_varRecordType[key] = rec;
+}
+
+// Look a variable up in this function's scope, then at the top level. A
+// top-level record variable really is visible to the whole file's statements,
+// which all become wandaa_main.
+std::string lookupVarRecord(const std::string& name){
+  auto it = g_varRecordType.find(scopedVar(name));
+  if(it != g_varRecordType.end()) return it->second;
+  it = g_varRecordType.find("::" + name);
+  if(it != g_varRecordType.end()) return it->second;
+  return "";
 }
 std::unordered_map<std::string, std::string> g_fnRecord;
 
 std::string recordTypeNameOf(const NodePtr& n){
   if(!n) return "";
   if(n->type == NT::RecordLit) return n->sval;
-  if(n->type == NT::Var){
-    auto it = g_varRecordType.find(n->sval);
-    return it != g_varRecordType.end() ? it->second : "";
-  }
+  if(n->type == NT::Var) return lookupVarRecord(n->sval);
   // `tokens[i].izina` where tokens was declared `urutonde<Ikimenyetso>`.
   if(n->type == NT::Index && !n->kids.empty() && n->kids[0]->type == NT::Var){
     auto it = g_arrElemRecord.find(n->kids[0]->sval);
@@ -487,6 +511,7 @@ void collectTypesRec(const NodePtr& n, std::unordered_map<std::string,VType>& ty
     // otherwise an urutonde() array assigned to by index inside a umurimo
     // never gets an element type and reads back as raw Int/pointer bits.
     std::unordered_map<std::string,VType> localTypes;
+    RecordScope rs(n->sval);
     for(auto& k : n->kids) collectTypesRec(k, localTypes);
     findArrayReturnType(n, n->sval);
     return;
@@ -524,8 +549,16 @@ void collectTypesRec(const NodePtr& n, std::unordered_map<std::string,VType>& ty
 
 void scanRecordLits(const NodePtr& n, std::unordered_map<std::string,VType>& types){
   if(!n) return;
+  // A function body's record variables belong to that function's scope, the
+  // same as everywhere else -- this walk descends into FuncDecls rather than
+  // stopping at them, so it has to say which scope it is in.
+  if(n->type == NT::FuncDecl){
+    RecordScope rs(n->sval);
+    for(auto& c : n->kids) scanRecordLits(c, types);
+    return;
+  }
   if(n->type == NT::VarDecl && !n->kids.empty() && n->kids[0]->type==NT::RecordLit){
-    g_varRecordType[n->sval] = n->kids[0]->sval;
+    noteVarRecord(n->sval, n->kids[0]->sval, n->line);
   }
   if(n->type == NT::RecordLit){
     auto rit = g_recordTypes.find(n->sval);
@@ -1255,6 +1288,7 @@ void checkProgram(const NodePtr& program,
                        ? pit->second[i] : VType::Int;
       fnTypes[k->params[i]] = pt;
     }
+    RecordScope rs(k->sval);
     collectTypesRec(k->kids[0], fnTypes);
     c.walk(k->kids[0], fnTypes);
   }
@@ -2145,6 +2179,7 @@ struct Codegen {
   void applyDeclaredTypes(const std::vector<NodePtr>& funcs,
                           std::unordered_map<std::string,std::vector<VType>>& fnParamTypes){
     for(auto& f : funcs){
+      RecordScope rs(f->sval);
       // `T` in `umurimo mbere<T>(a: urutonde<T>): T` names no concrete type --
       // it is bound per call site -- so resolving it here would be an error
       // about a type the programmer never claimed existed.
@@ -2192,6 +2227,11 @@ struct Codegen {
   // A type argument on a NAMED thing (a parameter or a variable) records what
   // its elements or payload are, under that name.
   void genFunction(const std::string& name, const std::vector<std::string>& params, const NodePtr& body){
+    // Everything below records or reads record types for THIS function --
+    // including the collectTypesRec call, which is why the scope opens here
+    // rather than further down.
+    RecordScope rs(name);
+
     // A lifted lambda body: its captures need frame slots of their own, filled
     // from the closure block in the prologue.
     auto capIt = g_lambdaCaptures.find(name);
@@ -2516,6 +2556,7 @@ struct Codegen {
           if(tit != g_lambdaCaptureTypes.end())
             for(const auto& kv : tit->second) types[kv.first] = kv.second;
         }
+        RecordScope rs(f->sval);
         inferPass(f->kids[0], types, fnParamTypes);
         bool found=false; VType rt=VType::Int;
         findReturnType(f->kids[0], types, found, rt);

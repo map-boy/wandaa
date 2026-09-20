@@ -330,6 +330,12 @@ reka k: Ikimenyetso = bose[0];
 andika(bose[0].inyandiko);     # `urutonde<Ikimenyetso>` is what resolves this
 ```
 
+Ubwoko bw'ikigereranyo bukurikiranwa kuri buri murimo, si muri porogaramu
+yose: imirimo ibiri ishobora gukoresha izina rimwe ku bwoko butandukanye.
+A record variable's type is tracked **per function**, so two functions — or
+two modules brought in with `injiza` — may use the same variable name for
+different records. Within one scope a name still means one record.
+
 ### Mu bwoko — record fields
 
 ```wandaa
