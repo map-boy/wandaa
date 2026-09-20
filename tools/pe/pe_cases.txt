@@ -1,0 +1,99 @@
+# Shared cases for the PE writer. Each block builds one image; `---` ends it.
+#
+# Read by BOTH tools/pe/pe_run.cpp (using PEWriter) and compiler/pe_check.waa
+# (using compiler/pe.waa). The two must produce identical bytes.
+#
+#   import <dll> <func>    declare an import
+#   begincode             lay out the import block, fix where code starts
+#   emit <hex>            append raw bytes to the section
+#   callimport <id>       FF 15 rel32 through that import's IAT slot
+#   entry <n>             entry point at codeBase + n
+#
+# --- no imports at all: just a section and a header
+begincode
+emit c3
+entry 0
+---
+# --- one DLL, one function
+import kernel32.dll ExitProcess
+begincode
+emit 4831c9
+callimport 0
+emit c3
+entry 0
+---
+# --- one DLL, several functions: one IAT run, one null thunk
+import kernel32.dll GetStdHandle
+import kernel32.dll WriteFile
+import kernel32.dll ExitProcess
+begincode
+callimport 0
+callimport 1
+callimport 2
+emit c3
+entry 0
+---
+# --- several DLLs, interleaved, so first-seen order is what decides layout
+import kernel32.dll GetStdHandle
+import user32.dll MessageBoxA
+import kernel32.dll WriteFile
+import ws2_32.dll socket
+import user32.dll MessageBeep
+begincode
+callimport 3
+callimport 1
+callimport 0
+emit c3
+entry 0
+---
+# --- odd and even name lengths, which decide the hint/name padding
+import kernel32.dll A
+import kernel32.dll AB
+import kernel32.dll ABC
+import kernel32.dll ABCD
+import kernel32.dll ABCDE
+begincode
+callimport 4
+emit c3
+entry 0
+---
+# --- an entry point that is not the first byte of the code
+import kernel32.dll ExitProcess
+begincode
+emit 9090909090909090
+callimport 0
+emit c3
+entry 8
+---
+# --- enough code to cross the 0x200 file-alignment boundary, so the section
+# --- is padded up and the image grows past the minimum
+import kernel32.dll ExitProcess
+begincode
+emit 48c7c00100000048c7c30200000048c7c10300000048c7c20400000048c7c605000000
+emit 48c7c00100000048c7c30200000048c7c10300000048c7c20400000048c7c605000000
+emit 48c7c00100000048c7c30200000048c7c10300000048c7c20400000048c7c605000000
+emit 48c7c00100000048c7c30200000048c7c10300000048c7c20400000048c7c605000000
+emit 48c7c00100000048c7c30200000048c7c10300000048c7c20400000048c7c605000000
+emit 48c7c00100000048c7c30200000048c7c10300000048c7c20400000048c7c605000000
+emit 48c7c00100000048c7c30200000048c7c10300000048c7c20400000048c7c605000000
+emit 48c7c00100000048c7c30200000048c7c10300000048c7c20400000048c7c605000000
+emit 48c7c00100000048c7c30200000048c7c10300000048c7c20400000048c7c605000000
+emit 48c7c00100000048c7c30200000048c7c10300000048c7c20400000048c7c605000000
+emit 48c7c00100000048c7c30200000048c7c10300000048c7c20400000048c7c605000000
+emit 48c7c00100000048c7c30200000048c7c10300000048c7c20400000048c7c605000000
+emit 48c7c00100000048c7c30200000048c7c10300000048c7c20400000048c7c605000000
+emit 48c7c00100000048c7c30200000048c7c10300000048c7c20400000048c7c605000000
+emit 48c7c00100000048c7c30200000048c7c10300000048c7c20400000048c7c605000000
+emit 48c7c00100000048c7c30200000048c7c10300000048c7c20400000048c7c605000000
+emit 48c7c00100000048c7c30200000048c7c10300000048c7c20400000048c7c605000000
+emit 48c7c00100000048c7c30200000048c7c10300000048c7c20400000048c7c605000000
+emit 48c7c00100000048c7c30200000048c7c10300000048c7c20400000048c7c605000000
+emit 48c7c00100000048c7c30200000048c7c10300000048c7c20400000048c7c605000000
+emit 48c7c00100000048c7c30200000048c7c10300000048c7c20400000048c7c605000000
+emit 48c7c00100000048c7c30200000048c7c10300000048c7c20400000048c7c605000000
+emit 48c7c00100000048c7c30200000048c7c10300000048c7c20400000048c7c605000000
+emit 48c7c00100000048c7c30200000048c7c10300000048c7c20400000048c7c605000000
+callimport 0
+emit c3
+entry 0
+---

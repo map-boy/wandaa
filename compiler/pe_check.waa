@@ -1,0 +1,108 @@
+# ===========================================================================
+#  compiler/pe_check.waa -- build the shared PE cases with the Wandaa writer.
+#
+#  Reads tools/pe/pe_cases.txt and prints one line of hex per image, which
+#  must match what tools/pe/pe_run.cpp produces using the C++ PEWriter.
+#  compiler/verify_pe.sh diffs the two.
+#
+#      waa compiler/pe_check.waa tools/pe/pe_cases.txt
+# ===========================================================================
+
+injiza "pe.waa";
+injiza "ibimenyetso.waa";          # for inzira_yatanzwe()
+
+ubwoko Soma { s: ijambo, i: umubare, n: umubare }
+
+umurimo igice_gikurikira(c: Soma): ijambo {
+  mugihe (c.i < c.n) {
+    reka d = inyuguti(c.s, c.i);
+    niba (d == 32 cyangwa d == 9 cyangwa d == 13) { c.i = c.i + 1; }
+    ubundi { hagarika; }
+  }
+  niba (c.i >= c.n) { tanga ""; }
+  niba (inyuguti(c.s, c.i) == 10) { tanga ""; }
+  reka aho = c.i;
+  mugihe (c.i < c.n) {
+    reka d = inyuguti(c.s, c.i);
+    niba (d == 32 cyangwa d == 10 cyangwa d == 13 cyangwa d == 9) { hagarika; }
+    c.i = c.i + 1;
+  }
+  tanga igice(c.s, aho, c.i - aho);
+}
+
+umurimo simbuka_umurongo(c: Soma) {
+  mugihe (c.i < c.n na inyuguti(c.s, c.i) != 10) { c.i = c.i + 1; }
+  niba (c.i < c.n) { c.i = c.i + 1; }
+}
+
+umurimo hex_imwe(v: umubare): umubare {
+  niba (v >= 48 na v <= 57) { tanga v - 48; }
+  niba (v >= 97 na v <= 102) { tanga v - 97 + 10; }
+  niba (v >= 65 na v <= 70) { tanga v - 65 + 10; }
+  tanga 0;
+}
+
+umurimo hex1(v: umubare): ijambo {
+  tanga igice("0123456789abcdef", biti_na(v, 15), 1);
+}
+
+umurimo andika_image(img: urutonde) {
+  reka o = "";
+  reka i = 0;
+  mugihe (i < ubunini(img)) {
+    o = o + hex1(biti_iburyo(img[i], 4)) + hex1(img[i]);
+    i = i + 1;
+  }
+  andika(o);
+}
+
+reka inzira: ijambo = inzira_yatanzwe();
+reka amasoko: ijambo = soma(inzira);
+
+niba (uburebure(amasoko) == 0) {
+  andika("Ikosa: ntibashoboye gusoma " + inzira);
+}
+ubundi {
+  reka c: Soma = Soma(amasoko, 0, uburebure(amasoko));
+  reka p: PE = pe_nshya();
+  reka codeBase = 0;
+
+  mugihe (c.i < c.n) {
+    reka op: ijambo = igice_gikurikira(c);
+
+    niba (uburebure(op) == 0) { simbuka_umurongo(c); komeza; }
+    niba (inyuguti(op, 0) == 35) { simbuka_umurongo(c); komeza; }   # '#'
+
+    niba (op == "---") {
+      andika_image(pe_image(p));
+      p = pe_nshya();
+      codeBase = 0;
+    }
+    ubundi niba (op == "import") {
+      reka dll: ijambo = igice_gikurikira(c);
+      reka func: ijambo = igice_gikurikira(c);
+      reka id = pe_ongeraho_import(p, dll, func);
+    }
+    ubundi niba (op == "begincode") {
+      codeBase = pe_begin_code(p);
+    }
+    ubundi niba (op == "emit") {
+      reka hx: ijambo = igice_gikurikira(c);
+      reka j = 0;
+      mugihe (j + 1 < uburebure(hx)) {
+        pe_byte(p, hex_imwe(inyuguti(hx, j)) * 16 + hex_imwe(inyuguti(hx, j + 1)));
+        j = j + 2;
+      }
+    }
+    ubundi niba (op == "callimport") {
+      pe_call_import(p, mu_mubare(igice_gikurikira(c)));
+    }
+    ubundi niba (op == "entry") {
+      pe_entry(p, codeBase + mu_mubare(igice_gikurikira(c)));
+    }
+    ubundi {
+      andika("IBWIRIZA RITAZWI: " + op);
+    }
+    simbuka_umurongo(c);
+  }
+}

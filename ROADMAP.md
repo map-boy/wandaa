@@ -206,7 +206,7 @@ compiler contributor a Wandaa programmer.
 | 2a | `compiler/lexer.waa` — the lexer in Wandaa | **Done** |
 | 2b | `compiler/parser.waa` — the parser in Wandaa | **Done** |
 | 2c-i | `compiler/x64.waa` — the instruction encoder in Wandaa | **Done** |
-| 2c-ii | `compiler/pe.waa` — the PE writer in Wandaa | Planned |
+| 2c-ii | `compiler/pe.waa` — the PE writer in Wandaa | **Done** |
 | 2c-iii | `compiler/codegen.waa` — the code generator in Wandaa | Planned |
 | 3 | Compile stage 2 with stage 0 → `wandaac-s1.exe` | Planned |
 | 4 | Compile stage 2 with `wandaac-s1.exe` → `wandaac-s2.exe` | Planned |
@@ -229,8 +229,14 @@ same bytes as `X64Asm` for 11,152 shared cases — which chains onto
 against GNU `as` rather than against the manual. It is a CI gate like the
 other two.
 
-What is left for stage 2 is the PE writer and the code generator itself. The
-runtime blob is data rather than code, so it can be read from a file.
+`compiler/pe.waa` is the PE64 writer in Wandaa, checked the same way:
+`compiler/verify_pe.sh` builds a set of shared cases with both writers and
+requires the images identical byte for byte, headers and import block
+included.
+
+What is left for stage 2 is the code generator itself — the tree walk that
+turns an AST into instructions. The runtime blob is data rather than code,
+so it can be read from a file.
 
 Every feature listed above as required now exists. That is not the same as
 having proved a compiler is writable in Wandaa — only stage 2 proves that, by

@@ -1,0 +1,287 @@
+# ===========================================================================
+#  compiler/pe.waa -- the PE64 writer, written in Wandaa.
+#
+#  Part of stage 2c of the bootstrap in ROADMAP.md, and a transliteration of
+#  include/pe_writer.hpp. Builds a Windows x86-64 executable with one RWX
+#  section holding code, data and the import block together.
+#
+#  Checked by compiler/verify_pe.sh, which requires it to produce the same
+#  bytes as PEWriter for a set of shared cases.
+#
+#  Declarations only -- `injiza` runs a module's top-level statements.
+# ===========================================================================
+
+ubwoko PE {
+  buf: urutonde,            # the section: imports, then code
+  dlls: urutonde,           # DLL names, in first-seen order
+  imp_dll: urutonde,        # per import, its DLL
+  imp_func: urutonde,       # per import, its function
+  iat: urutonde,            # per import, its IAT slot offset within buf
+  importDirRVA: umubare,
+  importDirSize: umubare,
+  entryOffset: umubare,
+  codeBase: umubare
+}
+
+umurimo pe_nshya(): PE {
+  tanga PE(urutonde(0), urutonde(0), urutonde(0), urutonde(0), urutonde(0), 0, 0, 0, 0);
+}
+
+# The section sits at RVA 0x1000; the file is aligned to 0x200 and the image
+# to 0x1000, which is what Windows requires of a PE64.
+umurimo pe_section_rva(): umubare { tanga 4096; }
+umurimo pe_file_align(): umubare { tanga 512; }
+umurimo pe_sect_align(): umubare { tanga 4096; }
+umurimo pe_image_base(): umubare { tanga 5368709120; }      # 0x140000000
+
+umurimo hejuru_kugeza(v: umubare, a: umubare): umubare {
+  tanga (v + a - 1) / a * a;
+}
+
+# ---- appending to the section --------------------------------------------
+umurimo pe_byte(p: PE, b: umubare) {
+  p.buf = ongeraho(p.buf, biti_na(b, 255));
+}
+umurimo pe_16(p: PE, v: umubare) {
+  pe_byte(p, v); pe_byte(p, biti_iburyo(v, 8));
+}
+umurimo pe_32(p: PE, v: umubare) {
+  pe_byte(p, v); pe_byte(p, biti_iburyo(v, 8));
+  pe_byte(p, biti_iburyo(v, 16)); pe_byte(p, biti_iburyo(v, 24));
+}
+umurimo pe_str(p: PE, s: ijambo) {
+  reka i = 0;
+  mugihe (i < uburebure(s)) { pe_byte(p, inyuguti(s, i)); i = i + 1; }
+  pe_byte(p, 0);
+}
+
+# ---- patching bytes already written --------------------------------------
+umurimo pe_32_kuri(p: PE, off: umubare, v: umubare) {
+  reka i = 0;
+  mugihe (i < 4) {
+    p.buf[off + i] = biti_na(biti_iburyo(v, i * 8), 255);
+    i = i + 1;
+  }
+}
+umurimo pe_64_kuri(p: PE, off: umubare, v: umubare) {
+  reka i = 0;
+  mugihe (i < 8) {
+    p.buf[off + i] = biti_na(biti_iburyo(v, i * 8), 255);
+    i = i + 1;
+  }
+}
+
+# ---- imports --------------------------------------------------------------
+umurimo pe_ongeraho_import(p: PE, dll: ijambo, func: ijambo): umubare {
+  reka id = ubunini(p.imp_dll);
+  p.imp_dll = ongeraho(p.imp_dll, dll);
+  p.imp_func = ongeraho(p.imp_func, func);
+  tanga id;
+}
+
+umurimo urutonde_rurimo(v: urutonde, s: ijambo): umubare {
+  reka bose: urutonde<ijambo> = v;
+  reka i = 0;
+  mugihe (i < ubunini(bose)) {
+    niba (bose[i] == s) { tanga 1; }
+    i = i + 1;
+  }
+  tanga 0;
+}
+
+# Lay out the import block at the start of the section. Called once, after
+# every addImport. Returns the offset where code begins.
+umurimo pe_begin_code(p: PE): umubare {
+  reka n = ubunini(p.imp_dll);
+  reka dll_ya: urutonde<ijambo> = p.imp_dll;
+
+  # DLLs in first-seen order.
+  reka i = 0;
+  mugihe (i < n) {
+    niba (urutonde_rurimo(p.dlls, dll_ya[i]) == 0) {
+      p.dlls = ongeraho(p.dlls, dll_ya[i]);
+    }
+    i = i + 1;
+  }
+  reka dlls: urutonde<ijambo> = p.dlls;
+  reka numDlls = ubunini(dlls);
+
+  # One 20-byte descriptor per DLL, plus a null one.
+  reka descTableSize = (numDlls + 1) * 20;
+  p.buf = urutonde(descTableSize);
+
+  # An IAT run per DLL: one slot per function, then a null terminator.
+  p.iat = urutonde(n);
+  reka iatOffsetForDll = urutonde(numDlls);
+  reka cursor = descTableSize;
+  reka d = 0;
+  mugihe (d < numDlls) {
+    iatOffsetForDll[d] = cursor;
+    reka j = 0;
+    mugihe (j < n) {
+      niba (dll_ya[j] == dlls[d]) { p.iat[j] = cursor; cursor = cursor + 8; }
+      j = j + 1;
+    }
+    cursor = cursor + 8;                       # the null thunk
+    d = d + 1;
+  }
+
+  # Grow the section to cover the descriptors and the IAT.
+  reka grown = urutonde(cursor);
+  reka c = 0;
+  mugihe (c < descTableSize) { grown[c] = p.buf[c]; c = c + 1; }
+  p.buf = grown;
+
+  # A hint/name entry per function, in the same DLL order.
+  reka nameOffset = urutonde(n);
+  reka func_ya: urutonde<ijambo> = p.imp_func;
+  d = 0;
+  mugihe (d < numDlls) {
+    reka j = 0;
+    mugihe (j < n) {
+      niba (dll_ya[j] == dlls[d]) {
+        nameOffset[j] = ubunini(p.buf);
+        pe_16(p, 0);                           # hint
+        pe_str(p, func_ya[j]);
+        niba (biti_na(ubunini(p.buf), 1)) { pe_byte(p, 0); }
+        j = j + 1;
+      }
+      ubundi { j = j + 1; }
+    }
+    d = d + 1;
+  }
+
+  reka dllNameOffset = urutonde(numDlls);
+  d = 0;
+  mugihe (d < numDlls) {
+    dllNameOffset[d] = ubunini(p.buf);
+    pe_str(p, dlls[d]);
+    d = d + 1;
+  }
+
+  # Each IAT slot points at its hint/name entry.
+  i = 0;
+  mugihe (i < n) {
+    pe_64_kuri(p, p.iat[i], pe_section_rva() + nameOffset[i]);
+    i = i + 1;
+  }
+
+  # Fill in the descriptors.
+  d = 0;
+  mugihe (d < numDlls) {
+    reka base = d * 20;
+    pe_32_kuri(p, base + 0, 0);
+    pe_32_kuri(p, base + 4, 0);
+    pe_32_kuri(p, base + 8, 0);
+    pe_32_kuri(p, base + 12, pe_section_rva() + dllNameOffset[d]);
+    pe_32_kuri(p, base + 16, pe_section_rva() + iatOffsetForDll[d]);
+    d = d + 1;
+  }
+
+  p.importDirRVA = pe_section_rva();
+  p.importDirSize = descTableSize;
+  p.codeBase = ubunini(p.buf);
+  tanga p.codeBase;
+}
+
+# FF 15 rel32 -> call qword ptr [rip+rel32], which calls through the IAT.
+umurimo pe_call_import(p: PE, id: umubare) {
+  pe_byte(p, 255);
+  pe_byte(p, 21);
+  reka patchAt = ubunini(p.buf);
+  pe_32(p, 0);
+  pe_32_kuri(p, patchAt, p.iat[id] - (patchAt + 4));
+}
+
+umurimo pe_entry(p: PE, off: umubare) { p.entryOffset = off; }
+
+# ---- the finished image ---------------------------------------------------
+ubwoko Dosiye { b: urutonde }
+
+umurimo f_byte(f: Dosiye, v: umubare) { f.b = ongeraho(f.b, biti_na(v, 255)); }
+umurimo f_16(f: Dosiye, v: umubare) { f_byte(f, v); f_byte(f, biti_iburyo(v, 8)); }
+umurimo f_32(f: Dosiye, v: umubare) {
+  f_byte(f, v); f_byte(f, biti_iburyo(v, 8));
+  f_byte(f, biti_iburyo(v, 16)); f_byte(f, biti_iburyo(v, 24));
+}
+umurimo f_64(f: Dosiye, v: umubare) {
+  f_32(f, v);
+  f_byte(f, biti_iburyo(v, 32)); f_byte(f, biti_iburyo(v, 40));
+  f_byte(f, biti_iburyo(v, 48)); f_byte(f, biti_iburyo(v, 56));
+}
+umurimo f_kugeza(f: Dosiye, n: umubare) {
+  mugihe (ubunini(f.b) < n) { f_byte(f, 0); }
+}
+
+umurimo pe_image(p: PE): urutonde {
+  reka f: Dosiye = Dosiye(urutonde(0));
+
+  # ---- DOS header: "MZ", then e_lfanew at 0x3C pointing at the PE header --
+  f_16(f, 23117);                              # 'MZ'
+  reka i = 0;
+  mugihe (i < 29) { f_16(f, 0); i = i + 1; }
+  f_32(f, 64);
+  f_kugeza(f, 64);
+
+  # ---- COFF header ------------------------------------------------------
+  f_32(f, 17744);                              # "PE\0\0"
+  f_16(f, 34404);                              # IMAGE_FILE_MACHINE_AMD64
+  f_16(f, 1);                                  # one section
+  f_32(f, 0); f_32(f, 0); f_32(f, 0);
+  f_16(f, 240);                                # size of the optional header
+  f_16(f, 34);                                 # EXECUTABLE_IMAGE | LARGE_ADDRESS_AWARE
+
+  reka sectionVSize = ubunini(p.buf);
+  reka sectionRawSize = hejuru_kugeza(sectionVSize, pe_file_align());
+
+  # ---- optional header (PE32+) ------------------------------------------
+  f_16(f, 523);                                # PE32+ magic
+  f_byte(f, 0); f_byte(f, 0);                  # linker version
+  f_32(f, sectionVSize);
+  f_32(f, 0); f_32(f, 0);
+  f_32(f, pe_section_rva() + p.entryOffset);
+  f_32(f, pe_section_rva());
+  f_64(f, pe_image_base());
+  f_32(f, pe_sect_align());
+  f_32(f, pe_file_align());
+  f_16(f, 6); f_16(f, 0);                      # OS version
+  f_16(f, 0); f_16(f, 0);                      # image version
+  f_16(f, 6); f_16(f, 0);                      # subsystem version
+  f_32(f, 0);
+
+  reka sizeOfImage = hejuru_kugeza(pe_section_rva() + sectionVSize, pe_sect_align());
+  f_32(f, sizeOfImage);
+  reka sizeOfHeaders = hejuru_kugeza(64 + 4 + 20 + 240 + 40, pe_file_align());
+  f_32(f, sizeOfHeaders);
+  f_32(f, 0);                                  # checksum
+  f_16(f, 3);                                  # CONSOLE
+  f_16(f, 0);
+  f_64(f, 1048576); f_64(f, 4096);             # stack reserve / commit
+  f_64(f, 1048576); f_64(f, 4096);             # heap reserve / commit
+  f_32(f, 0);
+  f_32(f, 16);                                 # number of data directories
+  i = 0;
+  mugihe (i < 16) {
+    niba (i == 1) { f_32(f, p.importDirRVA); f_32(f, p.importDirSize); }
+    ubundi { f_32(f, 0); f_32(f, 0); }
+    i = i + 1;
+  }
+
+  # ---- the one section --------------------------------------------------
+  f_byte(f, 46); f_byte(f, 116); f_byte(f, 101); f_byte(f, 120); f_byte(f, 116);
+  f_byte(f, 0); f_byte(f, 0); f_byte(f, 0);    # ".text\0\0\0"
+  f_32(f, sectionVSize);
+  f_32(f, pe_section_rva());
+  f_32(f, sectionRawSize);
+  f_32(f, sizeOfHeaders);
+  f_32(f, 0); f_32(f, 0);
+  f_16(f, 0); f_16(f, 0);
+  f_32(f, 3758096416);                         # 0xE0000020: RWX + code
+
+  f_kugeza(f, sizeOfHeaders);
+  i = 0;
+  mugihe (i < ubunini(p.buf)) { f_byte(f, p.buf[i]); i = i + 1; }
+  f_kugeza(f, sizeOfHeaders + sectionRawSize);
+
+  tanga f.b;
+}
