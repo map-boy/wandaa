@@ -1,0 +1,6 @@
+# Arithmetic, and the precedence the parser gives it.
+andika(1 + 2 * 3 - 4 / 2);
+andika((1 + 2) * 3);
+andika(0 - 7);
+andika(100 / 7);
+andika(100 - 7 * 14);

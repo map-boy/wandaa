@@ -1,0 +1,8 @@
+# Variables, assignment, and reassignment.
+reka a = 10;
+reka b = 32;
+andika(a + b);
+a = a * 2;
+andika(a);
+reka c = a - b;
+andika(c);

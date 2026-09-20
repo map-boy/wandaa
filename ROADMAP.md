@@ -207,7 +207,7 @@ compiler contributor a Wandaa programmer.
 | 2b | `compiler/parser.waa` — the parser in Wandaa | **Done** |
 | 2c-i | `compiler/x64.waa` — the instruction encoder in Wandaa | **Done** |
 | 2c-ii | `compiler/pe.waa` — the PE writer in Wandaa | **Done** |
-| 2c-iii | `compiler/codegen.waa` — the code generator in Wandaa | Planned |
+| 2c-iii | `compiler/codegen.waa` — the code generator in Wandaa | **Partial** |
 | 3 | Compile stage 2 with stage 0 → `wandaac-s1.exe` | Planned |
 | 4 | Compile stage 2 with `wandaac-s1.exe` → `wandaac-s2.exe` | Planned |
 | 5 | **Assert `wandaac-s1.exe` and `wandaac-s2.exe` are byte-identical** | Planned |
@@ -234,9 +234,19 @@ other two.
 requires the images identical byte for byte, headers and import block
 included.
 
-What is left for stage 2 is the code generator itself — the tree walk that
-turns an AST into instructions. The runtime blob is data rather than code,
-so it can be read from a file.
+`compiler/codegen.waa` is the code generator in Wandaa. It compiles a SUBSET
+— integers, strings, arithmetic, comparisons, `reka`, assignment, `niba`,
+`mugihe`, `hagarika`, `komeza`, functions and `andika` — and refuses anything
+outside it by name rather than mis-compiling it. For every program in
+`tests/bootstrap/` it produces an executable **byte-identical** to wandaac's,
+which `compiler/verify_codegen.sh` checks as a CI gate. That is Wandaa
+compiling Wandaa to a native executable.
+
+What is left for stage 2 is widening that subset to the whole language:
+records, arrays, maps, closures, generics, results, f64 and `hanze`. Stages
+3-5 then follow, and the runtime blob is already read from a file
+(`include/runtime_blob.txt`) rather than a C++ header, so nothing there
+blocks them.
 
 Every feature listed above as required now exists. That is not the same as
 having proved a compiler is writable in Wandaa — only stage 2 proves that, by

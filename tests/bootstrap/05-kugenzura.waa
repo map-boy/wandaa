@@ -1,0 +1,16 @@
+# Control flow: if/else chains, loops, break and continue.
+reka n = 7;
+niba (n > 5) { andika("kinini"); }
+ubundi niba (n > 2) { andika("hagati"); }
+ubundi { andika("gito"); }
+
+reka i = 0;
+mugihe (i < 5) { andika(i); i = i + 1; }
+
+i = 0;
+mugihe (i < 10) {
+  i = i + 1;
+  niba (i == 3) { komeza; }
+  niba (i == 7) { hagarika; }
+  andika(i);
+}

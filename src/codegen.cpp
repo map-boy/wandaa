@@ -128,6 +128,10 @@ struct RecordTypeInfo {
   // existed keep their old layout exactly.
   std::unordered_map<std::string,int> fieldWidth;
   std::unordered_map<std::string,VType> fieldType;
+  // For a field that IS a record, or an array of one, the record's name. A
+  // VType of Record says only "some record"; resolving `a.b.c` needs to know
+  // WHICH, or the inner field access silently reads offset 0.
+  std::unordered_map<std::string,std::string> fieldRecord;
   int totalSize = 0;
 };
 std::unordered_map<std::string, RecordTypeInfo> g_recordTypes;
@@ -186,6 +190,17 @@ std::string recordTypeNameOf(const NodePtr& n){
   if(!n) return "";
   if(n->type == NT::RecordLit) return n->sval;
   if(n->type == NT::Var) return lookupVarRecord(n->sval);
+  // A record inside a record: `g.fn.frameSize`. The base is itself a field
+  // access, so its own record type has to be resolved first.
+  if(n->type == NT::FieldAccess && !n->kids.empty()){
+    const std::string outer = recordTypeNameOf(n->kids[0]);
+    auto rit = g_recordTypes.find(outer);
+    if(rit != g_recordTypes.end()){
+      auto fit = rit->second.fieldRecord.find(n->sval);
+      if(fit != rit->second.fieldRecord.end()) return fit->second;
+    }
+    return "";
+  }
   // `tokens[i].izina` where tokens was declared `urutonde<Ikimenyetso>`.
   if(n->type == NT::Index && !n->kids.empty() && n->kids[0]->type == NT::Var){
     auto it = g_arrElemRecord.find(n->kids[0]->sval);
@@ -433,6 +448,7 @@ VType evalType(const NodePtr& n, const std::unordered_map<std::string,VType>& ty
         {"inkoranya", VType::Arr},
         {"shyiramo",  VType::Arr},
         {"arimo",     VType::Int},
+        {"mu_bayiti", VType::Str},
         {"byakunze",  VType::Result},
         {"byanze",    VType::Result},
         {"byarakunze",VType::Int},     // 1 or 0
@@ -685,10 +701,20 @@ void registerRecordTypes(const NodePtr& program){
         // A declared field type wins; without one scanRecordLits infers it
         // from the values a constructor is called with.
         info.fieldType[f]   = VType::Int;
-        if(i < k->paramTypes.size() && !k->paramTypes[i].empty())
+        if(i < k->paramTypes.size() && !k->paramTypes[i].empty()){
           info.fieldType[f] = requireType(k->paramTypes[i],
                                           "ku mwanya '" + f + "' muri '" + k->sval + "'",
                                           k->line);
+          // Remember WHICH record, for `outer.inner.field` and for a field
+          // declared `urutonde<Rec>`.
+          if(info.fieldType[f] == VType::Record)
+            info.fieldRecord[f] = typeBase(k->paramTypes[i]);
+          else {
+            const std::string arg = typeArg(k->paramTypes[i]);
+            if(!arg.empty() && g_recordTypes.count(typeBase(arg)))
+              info.fieldRecord[f] = typeBase(arg);
+          }
+        }
         off += w;
       }
       info.totalSize = off;
@@ -1118,7 +1144,7 @@ struct Checker {
       {"ongeraho",2},
       {"biti_na",2},{"biti_cyangwa",2},{"biti_gutandukana",2},
       {"biti_ibumoso",2},{"biti_iburyo",2},
-      {"inkoranya",0},{"shyiramo",3},{"fata",2},{"arimo",2}
+      {"inkoranya",0},{"shyiramo",3},{"fata",2},{"arimo",2},{"mu_bayiti",1}
     };
     return m;
   }
@@ -1866,6 +1892,22 @@ struct Codegen {
           callRuntime("wandaa_str_concat");
           break;
         }
+        // Ordering two strings is LEXICOGRAPHIC. Falling through to the
+        // integer path below would compare their pointers, which looks like
+        // it works and sorts by allocation order instead.
+        if(bothStr && (n->sval=="<" || n->sval==">" || n->sval=="<=" || n->sval==">=")){
+          genExpr(n->kids[0]);
+          pushTmp(X64Asm::RAX);
+          genExpr(n->kids[1]);
+          a.mov_reg(X64Asm::RDX, X64Asm::RAX);
+          popTmp(X64Asm::RCX);
+          callRuntime("wandaa_str_cmp");
+          a.cmp_imm(X64Asm::RAX, 0);
+          a.setcc(n->sval=="<"  ? "l"  : n->sval==">"  ? "g"  :
+                  n->sval=="<=" ? "le" : "ge");
+          a.movzx_rax_al();
+          break;
+        }
         if((n->sval=="==" || n->sval=="!=") && bothStr){
           genExpr(n->kids[0]);
           pushTmp(X64Asm::RAX);
@@ -1980,7 +2022,8 @@ struct Codegen {
       {"inkoranya", "wandaa_map_new"},      // a new empty map
       {"shyiramo",  "wandaa_map_put"},      // put, returning the map to keep
       {"fata",      "wandaa_map_get"},      // get, or 0 when absent
-      {"arimo",     "wandaa_map_has"}       // is the key there?
+      {"arimo",     "wandaa_map_has"},      // is the key there?
+      {"mu_bayiti", "wandaa_bytes_from_array"}  // array of byte values -> string
     };
     // A name that is a variable in this frame rather than a declared function
     // is a closure. The closure block travels as a hidden first argument, so

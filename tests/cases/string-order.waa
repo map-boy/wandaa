@@ -1,0 +1,31 @@
+# Ordering two strings is lexicographic, byte by byte, unsigned. Before this
+# existed, `<` on two strings fell through to the integer path and compared
+# their POINTERS -- which looks like it works and sorts by allocation order.
+andika("a" < "b");
+andika("b" < "a");
+andika("abc" < "abd");
+andika("abd" < "abc");
+
+# A prefix sorts before the longer string it is a prefix of.
+andika("ab" < "abc");
+andika("abc" < "ab");
+
+# Equal strings are neither less nor greater, but are <= and >=.
+andika("abc" < "abc");
+andika("abc" <= "abc");
+andika("abc" >= "abc");
+andika("abc" > "abc");
+
+# Capitals sort before lower case, since the bytes do.
+andika("Z" < "a");
+andika("a" < "Z");
+
+# The empty string sorts before everything.
+andika("" < "a");
+andika("a" < "");
+
+# It works on strings built at runtime, not only on literals.
+reka a = "um" + "wana";
+reka b = "um" + "untu";
+andika(a < b);
+andika(b < a);

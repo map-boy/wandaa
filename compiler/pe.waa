@@ -195,6 +195,10 @@ umurimo pe_call_import(p: PE, id: umubare) {
 
 umurimo pe_entry(p: PE, off: umubare) { p.entryOffset = off; }
 
+# Where an import's IAT slot sits within the section, so generated code can
+# reach it with `call qword ptr [rip+__imp_X]`.
+umurimo pe_iat(p: PE, id: umubare): umubare { tanga p.iat[id]; }
+
 # ---- the finished image ---------------------------------------------------
 ubwoko Dosiye { b: urutonde }
 

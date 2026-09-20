@@ -1,0 +1,9 @@
+# Strings: literals, concatenation, equality, and a local that holds one.
+andika("mwiriwe");
+reka s = "mwiriwe " + "Wandaa";
+andika(s);
+andika("a" == "a");
+andika("a" == "b");
+andika("a" != "b");
+reka t = s + "!";
+andika(t);

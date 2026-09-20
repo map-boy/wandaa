@@ -1,0 +1,17 @@
+# Functions: parameters, returns, recursion, nesting and the stack path for
+# arguments beyond the fourth.
+umurimo teranya(a, b) { tanga a + b; }
+umurimo kubyaza(x) { tanga x * x; }
+umurimo uruhererekane(n) {
+  niba (n <= 1) { tanga 1; }
+  tanga n * uruhererekane(n - 1);
+}
+umurimo byose(a, b, c, d, e, f) { tanga a + b + c + d + e + f; }
+
+andika(teranya(2, 3));
+andika(kubyaza(kubyaza(3)));
+andika(uruhererekane(6));
+andika(byose(1, 2, 3, 4, 5, 6));
+
+umurimo indamukanyo(izina: ijambo): ijambo { tanga "mwiriwe " + izina; }
+andika(indamukanyo("Ana"));

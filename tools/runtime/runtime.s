@@ -55,6 +55,8 @@
 .globl wandaa_map_put
 .globl wandaa_map_get
 .globl wandaa_map_has
+.globl wandaa_bytes_from_array
+.globl wandaa_str_cmp
 .globl wandaa_read_file
 .globl wandaa_write_file
 .globl wandaa_append_file
@@ -1482,6 +1484,124 @@ wandaa_ap_fits:
   inc r13
   mov [rbx-8], r13                  # the new count
   mov rax, rbx
+
+  pop r14
+  pop r13
+  pop r12
+  pop rbx
+  add rsp, 64
+  pop rbp
+  ret
+
+# ========================= wandaa_str_cmp(a, b) =============================
+#  Lexicographic order: negative when a sorts first, 0 when equal, positive
+#  when b sorts first. Bytes are compared UNSIGNED, and a prefix sorts before
+#  the longer string it is a prefix of.
+#
+#  Without this, `<` on two strings compared their POINTERS -- which looks like
+#  it works, sorts by allocation order, and is wrong every time.
+#
+#  A leaf: four pushes, no calls, so no shadow space and no `sub rsp, 8`.
+wandaa_str_cmp:
+  push rbp
+  mov rbp, rsp
+  sub rsp, 48
+  push rbx
+  push r12
+  push r13
+  push r14
+
+  mov rbx, rcx                      # a
+  mov r12, rdx                      # b
+  mov r13, [rbx-8]                  # length of a
+  mov r14, [r12-8]                  # length of b
+
+  mov rcx, r13                      # rcx = the shorter length
+  cmp rcx, r14
+  jle wandaa_sc_have_min
+  mov rcx, r14
+wandaa_sc_have_min:
+
+  xor r8, r8
+wandaa_sc_loop:
+  cmp r8, rcx
+  jge wandaa_sc_by_length
+  movzx r9, byte ptr [rbx+r8]
+  movzx r10, byte ptr [r12+r8]
+  cmp r9, r10
+  jne wandaa_sc_differ
+  inc r8
+  jmp wandaa_sc_loop
+
+wandaa_sc_differ:
+  mov rax, r9
+  sub rax, r10
+  jmp wandaa_sc_done
+
+wandaa_sc_by_length:                # one is a prefix of the other
+  mov rax, r13
+  sub rax, r14
+
+wandaa_sc_done:
+  pop r14
+  pop r13
+  pop r12
+  pop rbx
+  add rsp, 48
+  pop rbp
+  ret
+
+# ==================== wandaa_bytes_from_array(a) ============================
+#  Turn an array of numbers into a string whose bytes are their low bytes.
+#
+#  This is how a Wandaa program writes a BINARY file: andikamo() takes a
+#  string, and a string is just bytes with a length header, so packing an
+#  array into one is the whole conversion. Values are masked to a byte, and a
+#  NUL is appended so the result is also usable as a C string.
+#
+#  Four pushes, so NO `sub rsp, 8`: see the note in wandaa_bounds_trap.
+wandaa_bytes_from_array:
+  push rbp
+  mov rbp, rsp
+  sub rsp, 64
+  push rbx
+  push r12
+  push r13
+  push r14
+
+  mov r12, rcx                      # the array
+  mov r13, [r12-8]                  # how many elements
+  cmp r13, 0
+  jge wandaa_bfa_ok
+  xor r13, r13
+wandaa_bfa_ok:
+
+  sub rsp, 32
+  call qword ptr [rip+__imp_GetProcessHeap]
+  add rsp, 32
+  mov rcx, rax
+  xor rdx, rdx
+  lea r8, [r13+17]                  # two header words + bytes + NUL
+  sub rsp, 32
+  call qword ptr [rip+__imp_HeapAlloc]
+  add rsp, 32
+
+  mov rbx, rax
+  mov [rbx], r13                    # capacity
+  mov [rbx+8], r13                  # length
+  lea r14, [rbx+16]
+
+  xor rcx, rcx
+wandaa_bfa_copy:
+  cmp rcx, r13
+  jge wandaa_bfa_done
+  mov rax, [r12+rcx*8]
+  mov [r14+rcx], al
+  inc rcx
+  jmp wandaa_bfa_copy
+wandaa_bfa_done:
+  mov byte ptr [r14+r13], 0
+  mov rax, r14
 
   pop r14
   pop r13

@@ -66,6 +66,12 @@ jobs:
         shell: pwsh
         run: .\compiler\verify_pe.ps1
 
+      # Stage 2c: the Wandaa code generator has to produce byte-identical
+      # executables, not merely ones that behave the same.
+      - name: Wandaa codegen vs C++ codegen
+        shell: pwsh
+        run: .\compiler\verify_codegen.ps1
+
   # Ground-truth checks that need GNU binutils. These gate the two things that
   # cannot be eyeballed: that X64Asm agrees with a real assembler byte-for-byte,
   # and that the checked-in runtime blob still matches runtime.s.

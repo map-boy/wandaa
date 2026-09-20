@@ -1,0 +1,10 @@
+# Comparisons and the boolean operators, including short-circuit.
+andika(3 < 5); andika(3 > 5);
+andika(3 <= 3); andika(3 >= 4);
+andika(3 == 3); andika(3 != 3);
+reka a = 1;
+reka b = 0;
+andika(a na b);
+andika(a cyangwa b);
+andika(si a);
+andika(si b);

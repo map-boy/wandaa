@@ -1,0 +1,12 @@
+# A loop that builds a string, which is what makes a local freeable: the
+# value is a fresh allocation and never leaves the variable.
+reka i = 0;
+mugihe (i < 5) {
+  reka ubutumwa = "umurongo " + "wa";
+  andika(ubutumwa);
+  i = i + 1;
+}
+reka igisubizo = "a" + "b";
+andika(igisubizo);
+igisubizo = "c" + "d";
+andika(igisubizo);
