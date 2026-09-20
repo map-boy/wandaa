@@ -1,0 +1,47 @@
+# Records: literals, field reads and writes, packed widths, nesting, records
+# in arrays, records across a call boundary -- and the shadowing rule, where a
+# declared function of a builtin's name is the one that gets called.
+ubwoko Ingingo { x: umubare, y: umubare }
+ubwoko Umuntu { izina: ijambo, imyaka: umubare }
+ubwoko Ipaki { a: 2, b: 2, c: 4 }
+ubwoko Imbere { v: umubare }
+ubwoko Hanze { i: Imbere, n: ijambo }
+
+reka p = Ingingo(3, 4);
+andika(p.x);
+andika(p.y);
+p.x = p.x + 10;
+andika(p.x);
+
+reka u = Umuntu("Ana", 30);
+andika(u.izina);
+andika(u.imyaka);
+u.izina = u.izina + " Uwase";
+andika(u.izina);
+
+# Narrow fields: 2 bytes, 2 bytes, 4 bytes, all inside one block.
+reka k = Ipaki(1, 4660, 16777343);
+andika(k.a);
+andika(k.b);
+andika(k.c);
+k.b = 65535;
+andika(k.b);
+
+reka h = Hanze(Imbere(7), "hejuru");
+andika(h.i.v);
+andika(h.n);
+
+reka intonde = [Ingingo(1, 2), Ingingo(3, 4), Ingingo(5, 6)];
+reka i = 0;
+mugihe (i < ubunini(intonde)) {
+  andika(intonde[i].x + intonde[i].y);
+  i = i + 1;
+}
+
+umurimo teranya(g: Ingingo): umubare { tanga g.x + g.y; }
+umurimo shya(a: umubare, b: umubare): Ingingo { tanga Ingingo(a, b); }
+andika(teranya(shya(20, 22)));
+
+# A declared function shadows the builtin that shares its name.
+umurimo uburebure(a: umubare): umubare { tanga a * 2; }
+andika(uburebure(21));

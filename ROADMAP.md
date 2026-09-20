@@ -218,13 +218,13 @@ Stages 2a and 2b are in. `compiler/ibimenyetso.waa` is the lexer and
 token stream and an AST. `compiler/verify_lexer.sh` and
 `compiler/verify_parser.sh` (each with a PowerShell twin for CI) require both
 to be byte-identical to `wandaac --tokens` and `wandaac --ast` for every
-`.waa` file in the repository — 53 of them, including their own sources. That
+`.waa` file in the repository — 62 of them, including their own sources. That
 is the same ground-truth-by-comparison the instruction encoder uses, and both
 are CI gates.
 
 Stage 2c has started. `compiler/x64.waa` is the x86-64 instruction encoder
 written in Wandaa, and `compiler/verify_enc.sh` requires it to produce the
-same bytes as `X64Asm` for 11,152 shared cases — which chains onto
+same bytes as `X64Asm` for 20,368 shared cases — which chains onto
 `tools/enc/run_verify.sh`, so the Wandaa encoder is verified transitively
 against GNU `as` rather than against the manual. It is a CI gate like the
 other two.
@@ -237,15 +237,18 @@ included.
 `compiler/codegen.waa` is the code generator in Wandaa. It compiles a SUBSET
 — integers, strings, arithmetic, comparisons, `reka`, assignment, `niba`,
 `mugihe`, `hagarika`, `komeza`, functions, `andika`, arrays (literals,
-`urutonde`, indexing with its bounds check, `ongeraho`), maps, the string
-builtins and the bitwise ones — and refuses anything outside it by name
+`urutonde`, indexing with its bounds check, `ongeraho`), maps, records
+(`ubwoko`, literals, field reads and writes, narrow field widths, nesting),
+the string builtins, the bitwise ones, the escape analysis that decides which
+locals a frame frees, and the rule that a declared function shadows a builtin
+of the same name — and refuses anything outside it by name
 rather than mis-compiling it. For every program in
 `tests/bootstrap/` it produces an executable **byte-identical** to wandaac's,
 which `compiler/verify_codegen.sh` checks as a CI gate. That is Wandaa
 compiling Wandaa to a native executable.
 
 What is left for stage 2 is widening that subset to the whole language:
-records, closures, generics, results, f64 and `hanze`. Stages
+closures, generics, results, f64 and `hanze`. Stages
 3-5 then follow, and the runtime blob is already read from a file
 (`include/runtime_blob.txt`) rather than a C++ header, so nothing there
 blocks them.

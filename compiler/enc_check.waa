@@ -142,6 +142,30 @@ ubundi {
     ubundi niba (izina == "mov_load_rbp") {
       reka d = umubare_gikurikira(c); mov_load_rbp(k, d, umubare_gikurikira(c));
     }
+    ubundi niba (izina == "mov_store_base_byte") {
+      reka b = umubare_gikurikira(c); reka dd = umubare_gikurikira(c);
+      mov_store_base_byte(k, b, dd, umubare_gikurikira(c));
+    }
+    ubundi niba (izina == "mov_load_base_byte_zx") {
+      reka d = umubare_gikurikira(c); reka b = umubare_gikurikira(c);
+      mov_load_base_byte_zx(k, d, b, umubare_gikurikira(c));
+    }
+    ubundi niba (izina == "mov_store_base_word") {
+      reka b = umubare_gikurikira(c); reka dd = umubare_gikurikira(c);
+      mov_store_base_word(k, b, dd, umubare_gikurikira(c));
+    }
+    ubundi niba (izina == "mov_load_base_word_zx") {
+      reka d = umubare_gikurikira(c); reka b = umubare_gikurikira(c);
+      mov_load_base_word_zx(k, d, b, umubare_gikurikira(c));
+    }
+    ubundi niba (izina == "mov_store_base_dword") {
+      reka b = umubare_gikurikira(c); reka dd = umubare_gikurikira(c);
+      mov_store_base_dword(k, b, dd, umubare_gikurikira(c));
+    }
+    ubundi niba (izina == "mov_load_base_dword_zx") {
+      reka d = umubare_gikurikira(c); reka b = umubare_gikurikira(c);
+      mov_load_base_dword_zx(k, d, b, umubare_gikurikira(c));
+    }
     ubundi niba (izina == "setcc") { setcc(k, igice_gikurikira(c)); }
     ubundi {
       andika("IKIMENYETSO KITAZWI: " + izina);

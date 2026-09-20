@@ -283,6 +283,40 @@ umurimo mov_load_rbp(k: Kode, dst: umubare, disp: umubare)  { rbp_mem(k, 139, ds
 
 # setcc al. Signed conditions are for integer cmp; UCOMISD sets CF/ZF rather
 # than SF/OF, so float comparisons need the UNSIGNED forms.
+# ---- narrow loads and stores ----------------------------------------------
+#  A store truncates from the low bits of the source; a load zero-extends, so
+#  a narrow field still reads back as a clean 64-bit Wandaa integer.
+#
+#  The byte store needs a bare REX (0x40) for RSP/RBP/RSI/RDI as the SOURCE:
+#  without it those encodings mean AH/CH/DH/BH instead.
+umurimo mov_store_base_byte(k: Kode, base: umubare, disp: umubare, src: umubare) {
+  reka force = 0;
+  niba (src >= 4 na src < 8) { force = 1; }
+  rex(k, 0, hejuru(src), 0, hejuru(base), force);
+  emit(k, 136); mem_base_disp(k, src, base, disp);
+}
+umurimo mov_load_base_byte_zx(k: Kode, dst: umubare, base: umubare, disp: umubare) {
+  rex(k, 1, hejuru(dst), 0, hejuru(base), 0);
+  emit(k, 15); emit(k, 182); mem_base_disp(k, dst, base, disp);
+}
+umurimo mov_store_base_word(k: Kode, base: umubare, disp: umubare, src: umubare) {
+  emit(k, 102);                              # the operand-size prefix
+  rex(k, 0, hejuru(src), 0, hejuru(base), 0);
+  emit(k, 137); mem_base_disp(k, src, base, disp);
+}
+umurimo mov_load_base_word_zx(k: Kode, dst: umubare, base: umubare, disp: umubare) {
+  rex(k, 1, hejuru(dst), 0, hejuru(base), 0);
+  emit(k, 15); emit(k, 183); mem_base_disp(k, dst, base, disp);
+}
+umurimo mov_store_base_dword(k: Kode, base: umubare, disp: umubare, src: umubare) {
+  rex(k, 0, hejuru(src), 0, hejuru(base), 0);
+  emit(k, 137); mem_base_disp(k, src, base, disp);
+}
+umurimo mov_load_base_dword_zx(k: Kode, dst: umubare, base: umubare, disp: umubare) {
+  rex(k, 0, hejuru(dst), 0, hejuru(base), 0);
+  emit(k, 139); mem_base_disp(k, dst, base, disp);
+}
+
 umurimo rel32(k: Kode, izina: ijambo) {
   shyiraho_fixup(k, izina, 0);
   emit32(k, 0);

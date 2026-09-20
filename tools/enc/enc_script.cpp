@@ -130,6 +130,24 @@ int main(int argc, char** argv) {
             end("mov_load_rbp " + S(r) + " " + S(d));
         }
 
+    // narrow loads and stores, including the AH/CH/DH/BH boundary
+    for (int b = 0; b < 16; ++b)
+        for (long d : {0L, 8L, 127L, 128L, -1L, -129L})
+            for (int r = 0; r < 16; ++r) {
+                begin(); a.mov_store_base_byte(R(b), (int32_t)d, R(r));
+                end("mov_store_base_byte " + S(b) + " " + S(d) + " " + S(r));
+                begin(); a.mov_load_base_byte_zx(R(r), R(b), (int32_t)d);
+                end("mov_load_base_byte_zx " + S(r) + " " + S(b) + " " + S(d));
+                begin(); a.mov_store_base_word(R(b), (int32_t)d, R(r));
+                end("mov_store_base_word " + S(b) + " " + S(d) + " " + S(r));
+                begin(); a.mov_load_base_word_zx(R(r), R(b), (int32_t)d);
+                end("mov_load_base_word_zx " + S(r) + " " + S(b) + " " + S(d));
+                begin(); a.mov_store_base_dword(R(b), (int32_t)d, R(r));
+                end("mov_store_base_dword " + S(b) + " " + S(d) + " " + S(r));
+                begin(); a.mov_load_base_dword_zx(R(r), R(b), (int32_t)d);
+                end("mov_load_base_dword_zx " + S(r) + " " + S(b) + " " + S(d));
+            }
+
     const char* CCS[] = {"l","g","le","ge","e","ne","b","a","be","ae","p","np"};
     for (const char* cc : CCS) {
         begin(); a.setcc(cc);

@@ -50,6 +50,16 @@ ubwoko Gen {
   fn_str: urutonde,           # function name -> 1 when it returns a string
   fn_izina: urutonde,         # every declared function name
   arr_str: urutonde,          # array variable -> 1 when its elements are strings
+  # Records, as flat parallel lists: few records, few fields, so a linear
+  # scan is both simpler and obviously right.
+  rec_izina: urutonde,        # record names, in declaration order
+  rec_size: urutonde,         # record name -> total size in bytes
+  fld_rec: urutonde,          # per field: which record it belongs to
+  fld_izina: urutonde,        # per field: its name
+  fld_off: urutonde,          # per field: byte offset within the record
+  fld_width: urutonde,        # per field: 1, 2, 4 or 8
+  fld_str: urutonde,          # per field: 1 when it holds a string
+  var_rec: urutonde,          # variable -> record name, or absent
   isohoka: urutonde,          # locals this frame may free, sorted by name
   ikosa: ijambo
 }
@@ -58,7 +68,10 @@ umurimo gen_nshya(): Gen {
   tanga Gen(kode_nshya(), pe_nshya(),
             Fn(inkoranya(), inkoranya(), 0, ""),
             0, 0, urutonde(0), urutonde(0), urutonde(0), inkoranya(),
-            urutonde(0), inkoranya(), urutonde(0), "");
+            urutonde(0), inkoranya(),
+            urutonde(0), inkoranya(), urutonde(0), urutonde(0),
+            urutonde(0), urutonde(0), urutonde(0), inkoranya(),
+            urutonde(0), "");
 }
 
 umurimo izina_rishya(g: Gen, mbere: ijambo): ijambo {
@@ -147,6 +160,15 @@ umurimo ubwoko_bw_imvugo(g: Gen, n: Igice): umubare {
     }
     tanga 0;
   }
+  niba (t == "FieldAccess") {
+    reka ab: urutonde<Igice> = n.abana;
+    reka rec = ubwoko_bw_igice(g, ab[0]);
+    niba (uburebure(rec) > 0) {
+      reka fi = shaka_umwanya(g, rec, n.sval);
+      niba (fi >= 0) { tanga g.fld_str[fi]; }
+    }
+    tanga 0;
+  }
   niba (t == "Bin") {
     niba (n.sval == "&&" cyangwa n.sval == "||") { tanga 0; }
     niba (n.sval == "<" cyangwa n.sval == ">" cyangwa n.sval == "<=" cyangwa
@@ -216,6 +238,74 @@ umurimo aho_ry_ikigereranyo(g: Gen, izina: ijambo): umubare {
   tanga fata(g.fn.izina, izina);
 }
 
+# ---- ubwoko -- the record registry ----------------------------------------
+umurimo andika_ubwoko(g: Gen, n: Igice) {
+  reka izina = n.sval;
+  g.rec_izina = ongeraho(g.rec_izina, izina);
+  reka flds: urutonde<ijambo> = n.params;
+  reka types: urutonde<ijambo> = n.paramTypes;
+  reka off = 0;
+  reka i = 0;
+  mugihe (i < ubunini(flds)) {
+    # Fields are packed in declaration order with NO alignment padding: the
+    # declared widths ARE the layout, so a record can match a C struct byte
+    # for byte.
+    reka w = 8;
+    niba (i < ubunini(n.widths) na n.widths[i] > 0) { w = n.widths[i]; }
+    niba (w != 1 na w != 2 na w != 4 na w != 8) {
+      reka_ikosa(g, "ubugari bw'umwanya '" + flds[i] + "' bugomba kuba 1, 2, 4 cyangwa 8");
+      tanga 0;
+    }
+    reka ni_riro = 0;
+    niba (i < ubunini(types) na types[i] == "ijambo") { ni_riro = 1; }
+    g.fld_rec = ongeraho(g.fld_rec, izina);
+    g.fld_izina = ongeraho(g.fld_izina, flds[i]);
+    g.fld_off = ongeraho(g.fld_off, off);
+    g.fld_width = ongeraho(g.fld_width, w);
+    g.fld_str = ongeraho(g.fld_str, ni_riro);
+    off = off + w;
+    i = i + 1;
+  }
+  g.rec_size = shyiramo(g.rec_size, izina, off);
+}
+
+# The index of a field within the flat lists, or -1.
+umurimo shaka_umwanya(g: Gen, rec: ijambo, fld: ijambo): umubare {
+  reka rs: urutonde<ijambo> = g.fld_rec;
+  reka fs: urutonde<ijambo> = g.fld_izina;
+  reka i = 0;
+  mugihe (i < ubunini(rs)) {
+    niba (rs[i] == rec na fs[i] == fld) { tanga i; }
+    i = i + 1;
+  }
+  tanga 0 - 1;
+}
+
+umurimo ni_ubwoko(g: Gen, izina: ijambo): umubare {
+  tanga urimo_ijambo(g.rec_izina, izina);
+}
+
+# Which record an expression is, or "". Mirrors recordTypeNameOf: a variable,
+# a record literal, or a field that is itself a record.
+umurimo ubwoko_bw_igice(g: Gen, n: Igice): ijambo {
+  reka t = n.ubwoko_bwacyo;
+  niba (t == "RecordLit") { tanga n.sval; }
+  niba (t == "Var") {
+    niba (arimo(g.var_rec, n.sval)) {
+      reka bose: urutonde<ijambo> = g.rec_izina;
+      tanga bose[fata(g.var_rec, n.sval)];
+    }
+    tanga "";
+  }
+  niba (t == "Call") {
+    # A record constructor parses as a Call until the parser has seen the
+    # declaration; by emission time the registry knows better.
+    niba (ni_ubwoko(g, n.sval)) { tanga n.sval; }
+    tanga "";
+  }
+  tanga "";
+}
+
 # ---- gusohora -- which locals this frame may free -------------------------
 #  Mirrors the escape analysis in src/codegen.cpp. A local is freed only when
 #  every value it held was a FRESH allocation and the value never left the
@@ -224,7 +314,7 @@ umurimo aho_ry_ikigereranyo(g: Gen, izina: ijambo): umubare {
 #  prologue that zeroes those slots differs and so does every byte after it.
 umurimo ni_gishya(g: Gen, n: Igice): umubare {
   reka t = n.ubwoko_bwacyo;
-  niba (t == "ArrayLit") { tanga 1; }
+  niba (t == "ArrayLit" cyangwa t == "RecordLit") { tanga 1; }
   # Concatenation builds a new string; every other operator is arithmetic.
   niba (t == "Bin" na n.sval == "+" na ubwoko_bw_imvugo(g, n)) { tanga 1; }
   niba (t == "Call") {
@@ -265,7 +355,7 @@ umurimo amazina_yose(n: Igice, out: urutonde): urutonde {
   tanga out;
 }
 
-umurimo tora_gusohoka(n: Igice, bad: urutonde): urutonde {
+umurimo tora_gusohoka(g: Gen, n: Igice, bad: urutonde): urutonde {
   reka t = n.ubwoko_bwacyo;
   reka ab: urutonde<Igice> = n.abana;
 
@@ -273,7 +363,7 @@ umurimo tora_gusohoka(n: Igice, bad: urutonde): urutonde {
     # `reka x = v;` and `x = v;` make a second name for the same block.
     niba (ubunini(ab) > 0) {
       niba (ab[0].ubwoko_bwacyo == "Var") { bad = ongeraho(bad, ab[0].sval); }
-      bad = tora_gusohoka(ab[0], bad);
+      bad = tora_gusohoka(g, ab[0], bad);
     }
     tanga bad;
   }
@@ -282,14 +372,23 @@ umurimo tora_gusohoka(n: Igice, bad: urutonde): urutonde {
     mugihe (i < ubunini(ab)) { bad = amazina_yose(ab[i], bad); i = i + 1; }
     tanga bad;
   }
-  niba (t == "ArrayLit") {
+  niba (t == "ArrayLit" cyangwa t == "RecordLit") {
     # The block keeps whatever it is built from.
     reka i = 0;
     mugihe (i < ubunini(ab)) {
       niba (ab[i].ubwoko_bwacyo == "Var") { bad = ongeraho(bad, ab[i].sval); }
-      bad = tora_gusohoka(ab[i], bad);
+      bad = tora_gusohoka(g, ab[i], bad);
       i = i + 1;
     }
+    tanga bad;
+  }
+  niba (t == "FieldAssign") {
+    # base, VALUE -- the value escapes into the record.
+    niba (ubunini(ab) > 1 na ab[1].ubwoko_bwacyo == "Var") {
+      bad = ongeraho(bad, ab[1].sval);
+    }
+    reka i = 0;
+    mugihe (i < ubunini(ab)) { bad = tora_gusohoka(g, ab[i], bad); i = i + 1; }
     tanga bad;
   }
   niba (t == "IndexAssign") {
@@ -298,13 +397,13 @@ umurimo tora_gusohoka(n: Igice, bad: urutonde): urutonde {
       bad = ongeraho(bad, ab[2].sval);
     }
     reka i = 0;
-    mugihe (i < ubunini(ab)) { bad = tora_gusohoka(ab[i], bad); i = i + 1; }
+    mugihe (i < ubunini(ab)) { bad = tora_gusohoka(g, ab[i], bad); i = i + 1; }
     tanga bad;
   }
   niba (t == "Call") {
     reka i = 0;
-    niba (ni_ugutira(n.sval)) {
-      mugihe (i < ubunini(ab)) { bad = tora_gusohoka(ab[i], bad); i = i + 1; }
+    niba (ni_ugutira(n.sval) na urimo_ijambo(g.fn_izina, n.sval) == 0) {
+      mugihe (i < ubunini(ab)) { bad = tora_gusohoka(g, ab[i], bad); i = i + 1; }
     }
     ubundi {
       mugihe (i < ubunini(ab)) { bad = amazina_yose(ab[i], bad); i = i + 1; }
@@ -314,7 +413,7 @@ umurimo tora_gusohoka(n: Igice, bad: urutonde): urutonde {
   niba (t == "FuncDecl" cyangwa t == "Lambda") { tanga bad; }
 
   reka i = 0;
-  mugihe (i < ubunini(ab)) { bad = tora_gusohoka(ab[i], bad); i = i + 1; }
+  mugihe (i < ubunini(ab)) { bad = tora_gusohoka(g, ab[i], bad); i = i + 1; }
   tanga bad;
 }
 
@@ -367,7 +466,7 @@ umurimo shira_ku_murongo(v: urutonde): urutonde {
 }
 
 umurimo tora_isohoka(g: Gen, params: urutonde, body: Igice): urutonde {
-  reka bad: urutonde<ijambo> = tora_gusohoka(body, urutonde(0));
+  reka bad: urutonde<ijambo> = tora_gusohoka(g, body, urutonde(0));
   reka fresh = tora_gushyirwaho(g, body, urutonde(0), inkoranya());
   reka locals: urutonde<ijambo> = tora_amazina(body, urutonde(0));
   reka ps: urutonde<ijambo> = params;
@@ -478,6 +577,15 @@ umurimo gen_imvugo(g: Gen, n: Igice) {
   ubundi niba (t == "IndexAssign") {
     gen_index_assign(g, n);
   }
+  ubundi niba (t == "RecordLit") {
+    gen_ubwoko_lit(g, n);
+  }
+  ubundi niba (t == "FieldAccess") {
+    gen_umwanya(g, n);
+  }
+  ubundi niba (t == "FieldAssign") {
+    gen_umwanya_assign(g, n);
+  }
   ubundi niba (t == "Bin") {
     gen_bin(g, n);
   }
@@ -570,9 +678,10 @@ umurimo gen_guhamagara(g: Gen, n: Igice) {
   reka ab: urutonde<Igice> = n.abana;
 
   # Bitwise operations are single instructions, so they are emitted inline.
-  niba (n.sval == "biti_na" cyangwa n.sval == "biti_cyangwa" cyangwa
-        n.sval == "biti_gutandukana" cyangwa n.sval == "biti_ibumoso" cyangwa
-        n.sval == "biti_iburyo") {
+  niba (urimo_ijambo(g.fn_izina, n.sval) == 0 na
+        (n.sval == "biti_na" cyangwa n.sval == "biti_cyangwa" cyangwa
+         n.sval == "biti_gutandukana" cyangwa n.sval == "biti_ibumoso" cyangwa
+         n.sval == "biti_iburyo")) {
     niba (ubunini(ab) != 2) { reka_ikosa(g, "'" + n.sval + "' isaba ibipimo bibiri"); tanga 0; }
     reka ni_kwimura = 0;
     niba (n.sval == "biti_ibumoso" cyangwa n.sval == "biti_iburyo") { ni_kwimura = 1; }
@@ -590,8 +699,12 @@ umurimo gen_guhamagara(g: Gen, n: Igice) {
     tanga 0;
   }
 
-  reka rt = izina_ry_ibanze(n.sval);
-  niba (uburebure(rt) > 0) { emit_call(g, rt, n.abana); tanga 0; }
+  # Same shadowing rule as the checker: a declared function of this name is
+  # the one being called, not the builtin that happens to share it.
+  niba (urimo_ijambo(g.fn_izina, n.sval) == 0) {
+    reka rt = izina_ry_ibanze(n.sval);
+    niba (uburebure(rt) > 0) { emit_call(g, rt, n.abana); tanga 0; }
+  }
   emit_call(g, n.sval, n.abana);
 }
 
@@ -660,6 +773,100 @@ umurimo gen_index_assign(g: Gen, n: Igice) {
   gen_imvugo(g, ab[2]);
   pop_tmp(g, 1);
   mov_store_base(g.k, 1, 0, 0);
+}
+
+# Width-aware field access. A store truncates from the low bits of RAX; a
+# load zero-extends, so a narrow field reads back as a clean 64-bit integer.
+umurimo shyira_umwanya(g: Gen, base: umubare, disp: umubare, w: umubare) {
+  niba (w == 1) { mov_store_base_byte(g.k, base, disp, 0); }
+  ubundi niba (w == 2) { mov_store_base_word(g.k, base, disp, 0); }
+  ubundi niba (w == 4) { mov_store_base_dword(g.k, base, disp, 0); }
+  ubundi { mov_store_base(g.k, base, disp, 0); }
+}
+umurimo soma_umwanya(g: Gen, base: umubare, disp: umubare, w: umubare) {
+  niba (w == 1) { mov_load_base_byte_zx(g.k, 0, base, disp); }
+  ubundi niba (w == 2) { mov_load_base_word_zx(g.k, 0, base, disp); }
+  ubundi niba (w == 4) { mov_load_base_dword_zx(g.k, 0, base, disp); }
+  ubundi { mov_load_base(g.k, 0, base, disp); }
+}
+
+# A record is a heap block in the same shape as everything else: two header
+# words, then the packed fields. HEAP_ZERO_MEMORY matters -- a partly filled
+# record must not hand heap garbage to a Win32 call that reads the whole
+# struct.
+umurimo gen_ubwoko_lit(g: Gen, n: Igice) {
+  reka ab: urutonde<Igice> = n.abana;
+  niba (ni_ubwoko(g, n.sval) == 0) {
+    reka_ikosa(g, "ubwoko '" + n.sval + "' ntizwi");
+  }
+  reka total = fata(g.rec_size, n.sval);
+  call_import(g, "GetProcessHeap");
+  mov_reg(g.k, 1, 0);
+  mov_imm(g.k, 2, 8);
+  mov_imm(g.k, 8, 16 + total);
+  call_import(g, "HeapAlloc");
+  mov_reg(g.k, 12, 0);
+  mov_store_imm_base(g.k, 12, 0, 0);
+  mov_store_imm_base(g.k, 12, 8, 0);
+
+  reka i = 0;
+  mugihe (i < ubunini(ab)) {
+    reka fi = shaka_umwanya_ku_mubare(g, n.sval, i);
+    niba (fi < 0) { hagarika; }
+    # R12 has to survive the field's own code: a nested literal is codegen,
+    # not a call, and would overwrite it.
+    push_tmp(g, 12);
+    gen_imvugo(g, ab[i]);
+    pop_tmp(g, 12);
+    shyira_umwanya(g, 12, 16 + g.fld_off[fi], g.fld_width[fi]);
+    i = i + 1;
+  }
+  lea_base(g.k, 0, 12, 16);
+}
+
+# The i-th field of a record, in declaration order.
+umurimo shaka_umwanya_ku_mubare(g: Gen, rec: ijambo, idx: umubare): umubare {
+  reka rs: urutonde<ijambo> = g.fld_rec;
+  reka seen = 0;
+  reka i = 0;
+  mugihe (i < ubunini(rs)) {
+    niba (rs[i] == rec) {
+      niba (seen == idx) { tanga i; }
+      seen = seen + 1;
+    }
+    i = i + 1;
+  }
+  tanga 0 - 1;
+}
+
+umurimo gen_umwanya(g: Gen, n: Igice) {
+  reka ab: urutonde<Igice> = n.abana;
+  gen_imvugo(g, ab[0]);
+  reka rec = ubwoko_bw_igice(g, ab[0]);
+  reka off = 0;
+  reka w = 8;
+  niba (uburebure(rec) > 0) {
+    reka fi = shaka_umwanya(g, rec, n.sval);
+    niba (fi >= 0) { off = g.fld_off[fi]; w = g.fld_width[fi]; }
+    ubundi { reka_ikosa(g, "ubwoko '" + rec + "' nta mwanya ufite witwa '" + n.sval + "'"); }
+  }
+  soma_umwanya(g, 0, off, w);
+}
+
+umurimo gen_umwanya_assign(g: Gen, n: Igice) {
+  reka ab: urutonde<Igice> = n.abana;
+  gen_imvugo(g, ab[0]);
+  push_tmp(g, 0);
+  gen_imvugo(g, ab[1]);
+  pop_tmp(g, 1);
+  reka rec = ubwoko_bw_igice(g, ab[0]);
+  reka off = 0;
+  reka w = 8;
+  niba (uburebure(rec) > 0) {
+    reka fi = shaka_umwanya(g, rec, n.sval);
+    niba (fi >= 0) { off = g.fld_off[fi]; w = g.fld_width[fi]; }
+  }
+  shyira_umwanya(g, 1, off, w);
 }
 
 # ---- amabwiriza -- statements ---------------------------------------------
@@ -740,7 +947,7 @@ umurimo gen_ibwiriza(g: Gen, n: Igice) {
     ubundi { xor_eax_eax(g.k); }
     jmp(g.k, g.fn.epilogue);
   }
-  ubundi niba (t == "FuncDecl") {
+  ubundi niba (t == "FuncDecl" cyangwa t == "RecordDecl") {
     tanga 0;                                       # declaration only
   }
   ubundi {
@@ -762,6 +969,14 @@ umurimo gen_umurimo(g: Gen, izina: ijambo, params: urutonde, body: Igice,
     reka ni_riro = 0;
     niba (i < ubunini(pt) na pt[i] == "ijambo") { ni_riro = 1; }
     g.fn.ubwoko_bwa = shyiramo(g.fn.ubwoko_bwa, ps[i], ni_riro);
+    niba (i < ubunini(pt) na ni_ubwoko(g, pt[i])) {
+      reka bose: urutonde<ijambo> = g.rec_izina;
+      reka j = 0;
+      mugihe (j < ubunini(bose)) {
+        niba (bose[j] == pt[i]) { g.var_rec = shyiramo(g.var_rec, ps[i], j); }
+        j = j + 1;
+      }
+    }
     i = i + 1;
   }
   tora_ubwoko(g, body);
@@ -839,6 +1054,17 @@ umurimo tora_ubwoko(g: Gen, n: Igice) {
       reka ni_riro = ubwoko_bw_imvugo(g, ab[0]);
       niba (n.retType == "ijambo") { ni_riro = 1; }
       niba (ni_riro) { g.fn.ubwoko_bwa = shyiramo(g.fn.ubwoko_bwa, n.sval, 1); }
+      # Which record a variable holds, from a literal or a declared type.
+      reka rec = ubwoko_bw_igice(g, ab[0]);
+      niba (uburebure(n.retType) > 0 na ni_ubwoko(g, n.retType)) { rec = n.retType; }
+      niba (uburebure(rec) > 0) {
+        reka bose: urutonde<ijambo> = g.rec_izina;
+        reka j = 0;
+        mugihe (j < ubunini(bose)) {
+          niba (bose[j] == rec) { g.var_rec = shyiramo(g.var_rec, n.sval, j); }
+          j = j + 1;
+        }
+      }
       # `reka a = ["x", "y"];` -- the elements take the first one's type.
       niba (ab[0].ubwoko_bwacyo == "ArrayLit") {
         reka el: urutonde<Igice> = ab[0].abana;
@@ -896,8 +1122,14 @@ umurimo ubaka(g: Gen, program: Igice, b: Blob): urutonde {
   mugihe (i < ubunini(kids)) {
     reka t = kids[i].ubwoko_bwacyo;
     niba (t == "FuncDecl") { funcs = ongeraho(funcs, kids[i]); }
-    ubundi niba (t == "ExternDecl" cyangwa t == "RecordDecl") {
-      reka_ikosa(g, "'" + t + "' ntiryemewe muri iyi verisiyo");
+    ubundi niba (t == "RecordDecl") {
+      # Registered up front, but left in the stream: the C++ compiler still
+      # walks it as a statement, which emits its line marker.
+      andika_ubwoko(g, kids[i]);
+      ongeraho_umwana(rest, kids[i]);
+    }
+    ubundi niba (t == "ExternDecl") {
+      reka_ikosa(g, "'hanze' ntiryemewe muri iyi verisiyo");
     }
     ubundi { ongeraho_umwana(rest, kids[i]); }
     i = i + 1;
@@ -908,6 +1140,11 @@ umurimo ubaka(g: Gen, program: Igice, b: Blob): urutonde {
   mugihe (i < ubunini(funcs)) {
     g.fn_izina = ongeraho(g.fn_izina, funcs[i].sval);
     niba (funcs[i].retType == "ijambo") { g.fn_str = shyiramo(g.fn_str, funcs[i].sval, 1); }
+    ubundi niba (uburebure(funcs[i].retType) > 0) {
+      # Declared types win, so an annotated non-string return replaces the
+      # Str the builtin table seeds for a name like `soma`.
+      g.fn_str = shyiramo(g.fn_str, funcs[i].sval, 0);
+    }
     i = i + 1;
   }
 
