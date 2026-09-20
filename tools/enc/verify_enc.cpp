@@ -107,6 +107,8 @@ int main(int argc, char** argv) {
             for (int d : {0, 9, 15}) {
                 h.note(std::string("lea ") + RN[d] + ", [" + RN[b] + "+" + RN[i] + "*8]");
                 h.a.lea_sib(R(d), R(b), R(i));
+                h.note(std::string("mov ") + RN[d] + ", [" + RN[b] + "+" + RN[i] + "*8]");
+                h.a.mov_load_sib(R(d), R(b), R(i));
             }
         }
 

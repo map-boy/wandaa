@@ -205,7 +205,9 @@ compiler contributor a Wandaa programmer.
 | 1 | Phase 1 language features, so a compiler is writable | **Prerequisites met** |
 | 2a | `compiler/lexer.waa` — the lexer in Wandaa | **Done** |
 | 2b | `compiler/parser.waa` — the parser in Wandaa | **Done** |
-| 2c | `compiler/codegen.waa` — the code generator in Wandaa | Planned |
+| 2c-i | `compiler/x64.waa` — the instruction encoder in Wandaa | **Done** |
+| 2c-ii | `compiler/pe.waa` — the PE writer in Wandaa | Planned |
+| 2c-iii | `compiler/codegen.waa` — the code generator in Wandaa | Planned |
 | 3 | Compile stage 2 with stage 0 → `wandaac-s1.exe` | Planned |
 | 4 | Compile stage 2 with `wandaac-s1.exe` → `wandaac-s2.exe` | Planned |
 | 5 | **Assert `wandaac-s1.exe` and `wandaac-s2.exe` are byte-identical** | Planned |
@@ -220,9 +222,15 @@ to be byte-identical to `wandaac --tokens` and `wandaac --ast` for every
 is the same ground-truth-by-comparison the instruction encoder uses, and both
 are CI gates.
 
-What is left for stage 2 is the code generator, which is the large half: the
-instruction encoder, the PE writer and the runtime blob all have to be
-expressible in Wandaa.
+Stage 2c has started. `compiler/x64.waa` is the x86-64 instruction encoder
+written in Wandaa, and `compiler/verify_enc.sh` requires it to produce the
+same bytes as `X64Asm` for 11,152 shared cases — which chains onto
+`tools/enc/run_verify.sh`, so the Wandaa encoder is verified transitively
+against GNU `as` rather than against the manual. It is a CI gate like the
+other two.
+
+What is left for stage 2 is the PE writer and the code generator itself. The
+runtime blob is data rather than code, so it can be read from a file.
 
 Every feature listed above as required now exists. That is not the same as
 having proved a compiler is writable in Wandaa — only stage 2 proves that, by

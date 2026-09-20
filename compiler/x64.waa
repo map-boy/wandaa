@@ -1,0 +1,245 @@
+# ===========================================================================
+#  compiler/x64.waa -- the x86-64 instruction encoder, written in Wandaa.
+#
+#  Part of stage 2c of the bootstrap in ROADMAP.md, and a transliteration of
+#  include/x64asm.hpp. Every form here is checked against that encoder
+#  byte-for-byte by compiler/verify_enc.sh, which in turn is checked against
+#  GNU `as` by tools/enc/run_verify.sh. Neither is hand-derived from the
+#  manual.
+#
+#  Registers are their machine numbers: RAX 0, RCX 1, RDX 2, RBX 3, RSP 4,
+#  RBP 5, RSI 6, RDI 7, R8..R15 8..15.
+#
+#  Declarations only -- `injiza` runs a module's top-level statements.
+# ===========================================================================
+
+ubwoko Kode { bayiti: urutonde }
+
+umurimo kode_nshya(): Kode { tanga Kode(urutonde(0)); }
+
+umurimo emit(k: Kode, b: umubare) {
+  k.bayiti = ongeraho(k.bayiti, biti_na(b, 255));
+}
+
+umurimo emit32(k: Kode, v: umubare) {
+  emit(k, v);
+  emit(k, biti_iburyo(v, 8));
+  emit(k, biti_iburyo(v, 16));
+  emit(k, biti_iburyo(v, 24));
+}
+
+umurimo emit64(k: Kode, v: umubare) {
+  emit32(k, v);
+  emit(k, biti_iburyo(v, 32));
+  emit(k, biti_iburyo(v, 40));
+  emit(k, biti_iburyo(v, 48));
+  emit(k, biti_iburyo(v, 56));
+}
+
+umurimo modrm(md: umubare, reg: umubare, rm: umubare): umubare {
+  tanga biti_cyangwa(biti_ibumoso(biti_na(md, 3), 6),
+         biti_cyangwa(biti_ibumoso(biti_na(reg, 7), 3), biti_na(rm, 7)));
+}
+
+umurimo sib(scale: umubare, index: umubare, base: umubare): umubare {
+  tanga biti_cyangwa(biti_ibumoso(biti_na(scale, 3), 6),
+         biti_cyangwa(biti_ibumoso(biti_na(index, 7), 3), biti_na(base, 7)));
+}
+
+# REX is emitted only when it carries a bit, exactly as in the C++ encoder --
+# an unnecessary 0x40 would still execute but would not match byte for byte.
+umurimo rex(k: Kode, w: umubare, r: umubare, x: umubare, b: umubare, force: umubare) {
+  niba (w == 0 na r == 0 na x == 0 na b == 0 na force == 0) { tanga 0; }
+  emit(k, biti_cyangwa(64,
+         biti_cyangwa(biti_ibumoso(w, 3),
+          biti_cyangwa(biti_ibumoso(r, 2),
+           biti_cyangwa(biti_ibumoso(x, 1), b)))));
+}
+
+umurimo hejuru(r: umubare): umubare { niba (r >= 8) { tanga 1; } tanga 0; }
+
+# ---- [base + disp] --------------------------------------------------------
+#  Two quirks make x86-64 addressing unforgiving:
+#    * RSP/R12 (rm & 7 == 4) cannot be a bare base -- a SIB byte with
+#      index=100b (none) is mandatory.
+#    * RBP/R13 (rm & 7 == 5) cannot use mod=00 -- that encoding means
+#      RIP-relative -- so a zero disp8 is emitted instead.
+umurimo mem_base_disp(k: Kode, reg: umubare, base: umubare, disp: umubare) {
+  reka needSib = 0;
+  niba (biti_na(base, 7) == 4) { needSib = 1; }
+  reka baseIsBp = 0;
+  niba (biti_na(base, 7) == 5) { baseIsBp = 1; }
+
+  reka md = 2;
+  niba (disp == 0 na baseIsBp == 0) { md = 0; }
+  ubundi niba (disp >= 0 - 128 na disp <= 127) { md = 1; }
+
+  reka rm = biti_na(base, 7);
+  niba (needSib) { rm = 4; }
+  emit(k, modrm(md, reg, rm));
+  niba (needSib) { emit(k, sib(0, 4, base)); }
+  niba (md == 1) { emit(k, disp); }
+  ubundi niba (md == 2) { emit32(k, disp); }
+}
+
+# ---- [base + index*8] -----------------------------------------------------
+umurimo mem_sib(k: Kode, reg: umubare, base: umubare, index: umubare) {
+  reka md = 0;
+  niba (biti_na(base, 7) == 5) { md = 1; }
+  emit(k, modrm(md, reg, 4));
+  emit(k, sib(3, index, base));
+  niba (md == 1) { emit(k, 0); }
+}
+
+# ---- reg/reg forms: rm = dst, reg = src -----------------------------------
+umurimo rm_reg(k: Kode, opcode: umubare, rm: umubare, reg: umubare) {
+  rex(k, 1, hejuru(reg), 0, hejuru(rm), 0);
+  emit(k, opcode);
+  emit(k, modrm(3, reg, rm));
+}
+
+umurimo mov_reg(k: Kode, dst: umubare, src: umubare) { rm_reg(k, 137, dst, src); }
+umurimo add(k: Kode, dst: umubare, src: umubare)     { rm_reg(k, 1, dst, src); }
+umurimo sub(k: Kode, dst: umubare, src: umubare)     { rm_reg(k, 41, dst, src); }
+umurimo cmp(k: Kode, dst: umubare, src: umubare)     { rm_reg(k, 57, dst, src); }
+umurimo xorr(k: Kode, dst: umubare, src: umubare)    { rm_reg(k, 49, dst, src); }
+umurimo andr(k: Kode, dst: umubare, src: umubare)    { rm_reg(k, 33, dst, src); }
+umurimo orr(k: Kode, dst: umubare, src: umubare)     { rm_reg(k, 9, dst, src); }
+umurimo test(k: Kode, dst: umubare, src: umubare)    { rm_reg(k, 133, dst, src); }
+
+umurimo push(k: Kode, r: umubare) {
+  niba (r >= 8) { emit(k, 65); }
+  emit(k, 80 + biti_na(r, 7));
+}
+umurimo pop(k: Kode, r: umubare) {
+  niba (r >= 8) { emit(k, 65); }
+  emit(k, 88 + biti_na(r, 7));
+}
+
+umurimo shl_cl(k: Kode, dst: umubare) {
+  rex(k, 1, 0, 0, hejuru(dst), 0); emit(k, 211); emit(k, modrm(3, 4, dst));
+}
+umurimo shr_cl(k: Kode, dst: umubare) {
+  rex(k, 1, 0, 0, hejuru(dst), 0); emit(k, 211); emit(k, modrm(3, 5, dst));
+}
+umurimo sar_cl(k: Kode, dst: umubare) {
+  rex(k, 1, 0, 0, hejuru(dst), 0); emit(k, 211); emit(k, modrm(3, 7, dst));
+}
+
+umurimo xor_eax_eax(k: Kode) { emit(k, 49); emit(k, 192); }
+
+# IMUL is reversed: reg = dst, rm = src.
+umurimo imul(k: Kode, dst: umubare, src: umubare) {
+  rex(k, 1, hejuru(dst), 0, hejuru(src), 0);
+  emit(k, 15); emit(k, 175); emit(k, modrm(3, dst, src));
+}
+
+umurimo cqo(k: Kode) { emit(k, 72); emit(k, 153); }
+
+umurimo idiv(k: Kode, divisor: umubare) {
+  rex(k, 1, 0, 0, hejuru(divisor), 0); emit(k, 247); emit(k, modrm(3, 7, divisor));
+}
+umurimo neg(k: Kode, r: umubare) {
+  rex(k, 1, 0, 0, hejuru(r), 0); emit(k, 247); emit(k, modrm(3, 3, r));
+}
+
+umurimo movzx_rax_al(k: Kode) { emit(k, 72); emit(k, 15); emit(k, 182); emit(k, 192); }
+umurimo ret(k: Kode) { emit(k, 195); }
+
+umurimo call_reg(k: Kode, target: umubare) {
+  rex(k, 0, 0, 0, hejuru(target), 0);
+  emit(k, 255); emit(k, modrm(3, 2, target));
+}
+
+umurimo mov_imm(k: Kode, dst: umubare, imm: umubare) {
+  niba (imm >= 0 - 2147483648 na imm <= 2147483647) {
+    rex(k, 1, 0, 0, hejuru(dst), 0);
+    emit(k, 199); emit(k, modrm(3, 0, dst)); emit32(k, imm);
+  }
+  ubundi {
+    rex(k, 1, 0, 0, hejuru(dst), 0);
+    emit(k, 184 + biti_na(dst, 7));
+    emit64(k, imm);
+  }
+}
+
+# Group 1 with an immediate. Three encodings, picked shortest-first, matching
+# what GNU as emits. The accumulator form has no ModRM byte and therefore no
+# REX.B, so it is only valid for RAX -- never for R8.
+umurimo grp1_imm(k: Kode, digit: umubare, dst: umubare, imm: umubare) {
+  rex(k, 1, 0, 0, hejuru(dst), 0);
+  niba (imm >= 0 - 128 na imm <= 127) {
+    emit(k, 131); emit(k, modrm(3, digit, dst)); emit(k, imm);
+  }
+  ubundi niba (dst == 0) {
+    emit(k, 5 + digit * 8); emit32(k, imm);
+  }
+  ubundi {
+    emit(k, 129); emit(k, modrm(3, digit, dst)); emit32(k, imm);
+  }
+}
+
+umurimo add_imm(k: Kode, dst: umubare, imm: umubare) { grp1_imm(k, 0, dst, imm); }
+umurimo sub_imm(k: Kode, dst: umubare, imm: umubare) { grp1_imm(k, 5, dst, imm); }
+umurimo xor_imm(k: Kode, dst: umubare, imm: umubare) { grp1_imm(k, 6, dst, imm); }
+umurimo cmp_imm(k: Kode, dst: umubare, imm: umubare) { grp1_imm(k, 7, dst, imm); }
+
+umurimo mov_load_base(k: Kode, dst: umubare, base: umubare, disp: umubare) {
+  rex(k, 1, hejuru(dst), 0, hejuru(base), 0);
+  emit(k, 139); mem_base_disp(k, dst, base, disp);
+}
+umurimo mov_store_base(k: Kode, base: umubare, disp: umubare, src: umubare) {
+  rex(k, 1, hejuru(src), 0, hejuru(base), 0);
+  emit(k, 137); mem_base_disp(k, src, base, disp);
+}
+umurimo lea_base(k: Kode, dst: umubare, base: umubare, disp: umubare) {
+  rex(k, 1, hejuru(dst), 0, hejuru(base), 0);
+  emit(k, 141); mem_base_disp(k, dst, base, disp);
+}
+umurimo mov_store_imm_base(k: Kode, base: umubare, disp: umubare, imm: umubare) {
+  rex(k, 1, 0, 0, hejuru(base), 0);
+  emit(k, 199); mem_base_disp(k, 0, base, disp); emit32(k, imm);
+}
+
+umurimo mov_load_sib(k: Kode, dst: umubare, base: umubare, index: umubare) {
+  rex(k, 1, hejuru(dst), hejuru(index), hejuru(base), 0);
+  emit(k, 139); mem_sib(k, dst, base, index);
+}
+umurimo lea_sib(k: Kode, dst: umubare, base: umubare, index: umubare) {
+  rex(k, 1, hejuru(dst), hejuru(index), hejuru(base), 0);
+  emit(k, 141); mem_sib(k, dst, base, index);
+}
+
+# [rbp + disp] -- a local variable slot. RBP always needs a displacement.
+umurimo rbp_mem(k: Kode, opcode: umubare, reg: umubare, disp: umubare) {
+  rex(k, 1, hejuru(reg), 0, 0, 0);
+  emit(k, opcode);
+  niba (disp >= 0 - 128 na disp <= 127) {
+    emit(k, modrm(1, reg, 5)); emit(k, disp);
+  }
+  ubundi {
+    emit(k, modrm(2, reg, 5)); emit32(k, disp);
+  }
+}
+umurimo lea_rbp(k: Kode, dst: umubare, disp: umubare)       { rbp_mem(k, 141, dst, disp); }
+umurimo mov_store_rbp(k: Kode, disp: umubare, src: umubare) { rbp_mem(k, 137, src, disp); }
+umurimo mov_load_rbp(k: Kode, dst: umubare, disp: umubare)  { rbp_mem(k, 139, dst, disp); }
+
+# setcc al. Signed conditions are for integer cmp; UCOMISD sets CF/ZF rather
+# than SF/OF, so float comparisons need the UNSIGNED forms.
+umurimo setcc(k: Kode, cc: ijambo) {
+  reka op = 0;
+  niba (cc == "l") { op = 156; }
+  ubundi niba (cc == "g") { op = 159; }
+  ubundi niba (cc == "le") { op = 158; }
+  ubundi niba (cc == "ge") { op = 157; }
+  ubundi niba (cc == "e") { op = 148; }
+  ubundi niba (cc == "ne") { op = 149; }
+  ubundi niba (cc == "b") { op = 146; }
+  ubundi niba (cc == "a") { op = 151; }
+  ubundi niba (cc == "be") { op = 150; }
+  ubundi niba (cc == "ae") { op = 147; }
+  ubundi niba (cc == "p") { op = 154; }
+  ubundi niba (cc == "np") { op = 155; }
+  emit(k, 15); emit(k, op); emit(k, 192);
+}

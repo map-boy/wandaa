@@ -133,8 +133,13 @@ public:
     // mov dst, [base + index*8]   (array read; index is always RBX in codegen)
     void mov_load_sib(Reg dst, Reg base, Reg index) {
         emitRex(true, dst>=8, index>=8, base>=8);
-        emit(0x8B); emit(modrm(0, dst, 4));
-        emit(sib(3, index, base)); // scale=8
+        // memSib rather than a hand-rolled mod=00: with an RBP or R13 base,
+        // mod=00 with rm=100 means "disp32, no base" and the base register is
+        // dropped entirely. lea_sib always went through memSib; this one did
+        // not, and was the single SIB form the harness never covered.
+        // codegen only ever calls it with an RAX base, so nothing compiled
+        // differently -- but it was an unverified encoding.
+        emit(0x8B); memSib(dst, base, index);
     }
 
     // mov [base + disp8], src   (array write; handles RSP/R12 SIB quirk)
