@@ -1,0 +1,37 @@
+# Arrays: literals, urutonde(), indexed read and write, growth, and the
+# bounds check that guards every one of them.
+reka a = [10, 20, 30];
+andika(ubunini(a));
+andika(a[0]);
+andika(a[2]);
+andika(a[0] + a[1] + a[2]);
+
+reka b = urutonde(4);
+b[0] = 7;
+b[3] = 9;
+andika(b[0] + b[3]);
+andika(ubunini(b));
+
+# Elements keep their type, so a string element prints as a string.
+reka s = ["mwiriwe", "Wandaa"];
+andika(s[0]);
+andika(s[1]);
+
+reka t = urutonde(2);
+t[0] = "mbere";
+t[1] = "nyuma";
+andika(t[0]);
+andika(t[1]);
+
+# Growth doubles, so this is linear work rather than quadratic.
+reka c = urutonde(0);
+reka i = 0;
+mugihe (i < 20) { c = ongeraho(c, i * i); i = i + 1; }
+andika(ubunini(c));
+andika(c[19]);
+
+# Nested literals: the inner blocks must not overwrite the outer one.
+reka n = [[1, 2], [3, 4]];
+reka r0 = n[0];
+reka r1 = n[1];
+andika(r0[1] + r1[0]);

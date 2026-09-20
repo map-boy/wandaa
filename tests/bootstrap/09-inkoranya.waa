@@ -1,0 +1,28 @@
+# Maps, and the string builtins.
+reka m = inkoranya();
+m = shyiramo(m, "izina", 42);
+m = shyiramo(m, "indi", 7);
+andika(fata(m, "izina"));
+andika(fata(m, "indi"));
+andika(ubunini(m));
+andika(arimo(m, "izina"));
+andika(arimo(m, "ntayo"));
+andika(fata(m, "ntayo"));
+
+reka n = inkoranya();
+n = shyiramo(n, "k", "agaciro");
+andika(fata(n, "k"));
+
+# Enough entries to force several rehashes.
+reka big = inkoranya();
+reka i = 0;
+mugihe (i < 100) { big = shyiramo(big, "k" + mu_ijambo(i), i * 2); i = i + 1; }
+andika(ubunini(big));
+andika(fata(big, "k99"));
+
+reka s = "mwiriwe Wandaa";
+andika(uburebure(s));
+andika(inyuguti(s, 0));
+andika(igice(s, 0, 7));
+andika(mu_ijambo(42));
+andika(mu_mubare("42") + 1);

@@ -1,0 +1,15 @@
+# Bitwise operations, and what they are for: packing an instruction byte.
+andika(biti_na(12, 10));
+andika(biti_cyangwa(12, 10));
+andika(biti_gutandukana(12, 10));
+andika(biti_ibumoso(1, 8));
+andika(biti_iburyo(256, 4));
+andika(biti_na(0 - 1, 255));
+
+umurimo modrm(md, reg, rm) {
+  tanga biti_cyangwa(biti_ibumoso(md, 6),
+         biti_cyangwa(biti_ibumoso(biti_na(reg, 7), 3), biti_na(rm, 7)));
+}
+andika(modrm(3, 0, 0));
+andika(modrm(3, 2, 3));
+andika(modrm(1, 7, 5));

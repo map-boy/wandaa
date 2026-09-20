@@ -236,14 +236,16 @@ included.
 
 `compiler/codegen.waa` is the code generator in Wandaa. It compiles a SUBSET
 — integers, strings, arithmetic, comparisons, `reka`, assignment, `niba`,
-`mugihe`, `hagarika`, `komeza`, functions and `andika` — and refuses anything
-outside it by name rather than mis-compiling it. For every program in
+`mugihe`, `hagarika`, `komeza`, functions, `andika`, arrays (literals,
+`urutonde`, indexing with its bounds check, `ongeraho`), maps, the string
+builtins and the bitwise ones — and refuses anything outside it by name
+rather than mis-compiling it. For every program in
 `tests/bootstrap/` it produces an executable **byte-identical** to wandaac's,
 which `compiler/verify_codegen.sh` checks as a CI gate. That is Wandaa
 compiling Wandaa to a native executable.
 
 What is left for stage 2 is widening that subset to the whole language:
-records, arrays, maps, closures, generics, results, f64 and `hanze`. Stages
+records, closures, generics, results, f64 and `hanze`. Stages
 3-5 then follow, and the runtime blob is already read from a file
 (`include/runtime_blob.txt`) rather than a C++ header, so nothing there
 blocks them.
